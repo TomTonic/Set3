@@ -27,7 +27,7 @@ jobs:
         run: go test ./... -coverprofile=./cover.out -covermode=atomic -coverpkg=./...
 
       - name: Generate coverage badge
-        uses: vladopajic/go-test-coverage@c7fe52e0f48e0fbed8c1812824c5346218443c70 # v2.10.2
+        uses: vladopajic/go-test-coverage@8de5285cf28d75a0eaa2c9d2d9b5738cd72ff070 # v2.10.4
         with:
           profile: cover.out
           local-prefix: github.com/TomTonic/Set3
