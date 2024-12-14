@@ -263,10 +263,27 @@ func (thisSet *Set3[T]) Contains(element T) bool {
 }
 
 func getGroupIndex(hash, groupCount uint64) uint64 {
+	// no. 1: Original approach
 	// H1 := (hash & 0xffff_ffff_ffff_ff80) >> 7
+	// no. 2: adapt constant to use Lemire's fast alternative to the modulo reduction (see https://lemire.me/blog/2016/06/27/a-fast-alternative-to-the-modulo-reduction/)
+	// H1 := (hash & 0x0000_007f_ffff_ff80) >> 7
+	// no. 3: make sure not to loose entropy from the top 25 bits (in case of weak hash function)
+	// H1 := (((hash >> 25) ^ hash) & 0x0000_007f_ffff_ff80) >> 7
+
+	// Original approach (no. 1)
 	// return H1 % groupCount
-	H1 := (hash & 0x0000_007f_ffff_ff80) >> 7 // this impl uses Lemire's fast alternative to the modulo reduction, so adapt constant
-	return (H1 * groupCount) >> 32
+
+	// Lemire's fast alternative to the modulo reduction (no. 2)
+	// return (H1 * groupCount) >> 32
+
+	// no. 3b: same as no. 3
+	a := hash >> 32
+	b := hash >> 7
+	c := a ^ b
+	d := c & 0x0000_0000_ffff_ffff
+	e := d * groupCount
+	f := e >> 32
+	return f
 }
 
 /*
@@ -808,12 +825,14 @@ Example:
 	set.Clear()  // set will be empty, Count() will return 0
 */
 func (thisSet *Set3[T]) Clear() {
-	var k T
+	// var k T
 	for grpidx := range len(thisSet.groupCtrl) {
 		thisSet.groupCtrl[grpidx] = set3AllEmpty
-		for j := range set3groupSize {
-			thisSet.groupSlot[grpidx][j] = k
-		}
+		/*
+			for j := range set3groupSize {
+				thisSet.groupSlot[grpidx][j] = k
+			}
+		*/
 	}
 	thisSet.resident, thisSet.dead = 0, 0
 }
