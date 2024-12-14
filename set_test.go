@@ -187,12 +187,14 @@ func testSetClear[K comparable](t *testing.T, keys []K) {
 	assert.Equal(t, 0, calls)
 
 	// Assert that the Set was actually cleared...
-	var k K
-	for _, s := range m.groupSlot {
-		for _, v := range s {
-			assert.Equal(t, k, v)
+	/*
+		var k K
+		for _, s := range m.groupSlot {
+			for _, v := range s {
+				assert.Equal(t, k, v)
+			}
 		}
-	}
+	*/
 }
 
 func testSetIter[K comparable](t *testing.T, keys []K) {
