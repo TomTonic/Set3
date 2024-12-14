@@ -825,12 +825,14 @@ Example:
 	set.Clear()  // set will be empty, Count() will return 0
 */
 func (thisSet *Set3[T]) Clear() {
-	var k T
+	// var k T
 	for grpidx := range len(thisSet.groupCtrl) {
 		thisSet.groupCtrl[grpidx] = set3AllEmpty
-		for j := range set3groupSize {
-			thisSet.groupSlot[grpidx][j] = k
-		}
+		/*
+			for j := range set3groupSize {
+				thisSet.groupSlot[grpidx][j] = k
+			}
+		*/
 	}
 	thisSet.resident, thisSet.dead = 0, 0
 }
