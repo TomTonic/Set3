@@ -51,11 +51,12 @@ free of known issues.
 We categorize proposals into two types:
 
 1. **Low-risk modifications.**  Proposed by authorized committers, pass all
+
    tests, and are unlikely to have problems. These include documentation
    updates and minor function updates. The project lead can designate any
    modification as low-risk.
-
 2. Other modifications.  Require review by someone else or acceptance by the
+
    project lead. Typically, this involves creating a branch and a pull request
    for review before acceptance.
 
@@ -77,7 +78,9 @@ by a blank line from the body of the commit:
 
 ````txt
 Signed-off-by: YOUR NAME <YOUR.EMAIL@EXAMPLE.COM>
-````
+```
+
+`
 
 You can sign-off by default in this project by creating a file
 (say "git-template") that contains
@@ -86,7 +89,9 @@ then configure git to use that as a commit template.  For example:
 
 ````sh
 git config commit.template ~/best-practices-badge/git-template
-````
+```
+
+`
 
 It's not practical to fix old contributions in git, so if one is forgotten,
 do not try to fix them.  We presume that if someone sometimes used a DCO,
@@ -163,6 +168,7 @@ Follow these guidelines for writing git commit messages:
 5. Use the imperative mood in the subject line (*command* form).
 6. Wrap the body at 72 characters (`fmt -w 72`).
 7. Use the body to explain what and why, not how
+
    (git tracks how it was changed in detail, don't repeat that).
 
 ## Reuse (Supply Chain)
