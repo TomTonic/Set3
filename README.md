@@ -79,7 +79,7 @@ The following benchmarks have been performed with [v0.4.0](https://github.com/To
 go test -v -count=1 -run "^(TestSet3Fill|TestNativeMapFill|TestSet3Find|TestNativeMapFind)$" github.com/TomTonic/Set3 -timeout=120m > benchresult.txt
 ```
 
-(Raw benchmark results are available [here](https://raw.githubusercontent.com/TomTonic/Set3/main/benchresult.txt). Go version 1.23.1, no PGO.
+(Raw benchmark results are available [in plain text](https://raw.githubusercontent.com/TomTonic/Set3/main/benchresult.txt). Go version 1.23.1, no PGO.
 Please note that you have to comment out the instructions to skip the tests first (`t.Skip("...")`). The whole benchmark runs about 45 minutes.)
 
 ### Inserting Nodes into an Empty Set
@@ -108,4 +108,3 @@ The x-axis represents sets of varying sizes, and the y-axis indicates the averag
 
 n = 1 ... 300 (step size +1, linear scale)
 ![Time for Searching Random Values in a Set of Size n, 30% Hit Rate, n = 1 ... 300 (step size +1, linear scale)](https://github.com/user-attachments/assets/bf77efc4-fb60-4de4-a65e-087318e3958c)
-
