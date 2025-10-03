@@ -1,6 +1,6 @@
 module github.com/TomTonic/Set3
 
-go 1.24.6
+go 1.24.7
 
 require (
 	github.com/dolthub/maphash v0.1.0
