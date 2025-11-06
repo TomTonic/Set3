@@ -46,7 +46,11 @@ func TestRandomOps(t *testing.T) {
 		fmt.Println("Could not create CPU profile:", err)
 		return
 	}
-	defer f.Close()
+	defer func() {
+		if cerr := f.Close(); cerr != nil {
+			t.Fatalf("Could not close CPU profile: %v", cerr)
+		}
+	}()
 	if err := pprof.StartCPUProfile(f); err != nil {
 		fmt.Println("Could not start CPU profile:", err)
 		return
@@ -114,12 +118,11 @@ func refillAllSets(numSets, setSize, setVar, mod int, sets []*Set3[uint32]) {
 }
 
 func supersetTests(numSets, mod int, superset *Set3[uint32], sets []*Set3[uint32], t *testing.T) {
-	bingo := false
-	doh := false
 	for i := 0; i < numSets; i++ {
 		intersect := superset.Intersect(sets[i])
-		bingo = sets[i].ContainsAllOf(rand.Uint32()%uint32(mod), rand.Uint32()%uint32(mod), rand.Uint32()%uint32(mod), rand.Uint32()%uint32(mod)) || bingo
-		doh = sets[i].ContainsAnyOf(rand.Uint32()%uint32(mod), rand.Uint32()%uint32(mod)) || doh
+		// intentionally call Contains* to exercise code paths but do not keep the results
+		_ = sets[i].ContainsAllOf(rand.Uint32()%uint32(mod), rand.Uint32()%uint32(mod), rand.Uint32()%uint32(mod), rand.Uint32()%uint32(mod))
+		_ = sets[i].ContainsAnyOf(rand.Uint32()%uint32(mod), rand.Uint32()%uint32(mod))
 		equal := intersect.Equals(sets[i])
 		stringIntersect := intersect.String()
 		stringSet := sets[i].String()

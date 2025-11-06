@@ -59,8 +59,8 @@ func newSearchDataDriver(setSize int, targetHitRatio float64, seed uint64) *sear
 	vals := uniqueRandomNumbers(setSize, &s)
 	result := &searchDataDriver{
 		rng: &s,
-		// setValues: shuffleArray(vals, &s, 3),
-		setValues: vals,
+		// Shuffle values deterministically for test coverage
+		setValues: shuffleArray(vals, &s, 3),
 		hitRatio:  float64(targetHitRatio),
 	}
 	return result
