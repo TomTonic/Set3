@@ -285,7 +285,7 @@ func TestSet3MutableRange(t *testing.T) {
 }
 
 func TestSet3MutableRangeTwice(t *testing.T) {
-	set := FromArray[string]([]string{"A", "B", "C", "D", "E", "F", "G", "H", "I", "J", "K", "L"})
+	set := FromArray([]string{"A", "B", "C", "D", "E", "F", "G", "H", "I", "J", "K", "L"})
 	strary := make([]string, set.Size())
 
 	idx := 0
@@ -787,32 +787,32 @@ func TestSet3ContainsAny(t *testing.T) {
 	}{
 		{
 			name:     "No common elements",
-			thisSet:  FromArray[int]([]int{1, 2, 3}),
-			thatSet:  FromArray[int]([]int{4, 5, 6}),
+			thisSet:  FromArray([]int{1, 2, 3}),
+			thatSet:  FromArray([]int{4, 5, 6}),
 			expected: false,
 		},
 		{
 			name:     "Some common elements (this bigger)",
-			thisSet:  FromArray[int]([]int{1, 2, 3, 4}),
-			thatSet:  FromArray[int]([]int{3, 4, 5}),
+			thisSet:  FromArray([]int{1, 2, 3, 4}),
+			thatSet:  FromArray([]int{3, 4, 5}),
 			expected: true,
 		},
 		{
 			name:     "Some common elements (that bigger)",
-			thisSet:  FromArray[int]([]int{1, 2, 3}),
-			thatSet:  FromArray[int]([]int{3, 4, 5, 6}),
+			thisSet:  FromArray([]int{1, 2, 3}),
+			thatSet:  FromArray([]int{3, 4, 5, 6}),
 			expected: true,
 		},
 		{
 			name:     "All elements common",
-			thisSet:  FromArray[int]([]int{1, 2, 3}),
-			thatSet:  FromArray[int]([]int{1, 2, 3}),
+			thisSet:  FromArray([]int{1, 2, 3}),
+			thatSet:  FromArray([]int{1, 2, 3}),
 			expected: true,
 		},
 		{
 			name:     "Empty sets",
-			thisSet:  FromArray[int]([]int{}),
-			thatSet:  FromArray[int]([]int{}),
+			thisSet:  FromArray([]int{}),
+			thatSet:  FromArray([]int{}),
 			expected: false,
 		},
 	}
@@ -836,25 +836,25 @@ func TestSet3ContainsAnyFromArray(t *testing.T) {
 	}{
 		{
 			name:     "No common elements",
-			set:      FromArray[int]([]int{1, 2, 3}),
+			set:      FromArray([]int{1, 2, 3}),
 			array:    []int{4, 5, 6},
 			expected: false,
 		},
 		{
 			name:     "Some common elements",
-			set:      FromArray[int]([]int{1, 2, 3, 4}),
+			set:      FromArray([]int{1, 2, 3, 4}),
 			array:    []int{0, 3, 4, 5},
 			expected: true,
 		},
 		{
 			name:     "All elements common",
-			set:      FromArray[int]([]int{1, 2, 3}),
+			set:      FromArray([]int{1, 2, 3}),
 			array:    []int{1, 2, 3},
 			expected: true,
 		},
 		{
 			name:     "Empty sets",
-			set:      FromArray[int]([]int{}),
+			set:      FromArray([]int{}),
 			array:    []int{},
 			expected: false,
 		},

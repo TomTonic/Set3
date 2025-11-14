@@ -34,7 +34,7 @@ const (
 	set3AllDeleted uint64 = 0xFEFEFEFEFEFEFEFE
 	set3Empty      uint64 = 0b0000_1000_0000
 	set3Deleted    uint64 = 0b0000_1111_1110
-	set3Sentinel   uint64 = 0b0000_1111_1111
+	//set3Sentinel   uint64 = 0b0000_1111_1111
 )
 
 func set3ctlrMatchH2(m uint64, h uint64) uint64 {
