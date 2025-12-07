@@ -16,7 +16,6 @@ package set3
 
 import (
 	"testing"
-	"unsafe"
 
 	"github.com/stretchr/testify/assert"
 )
@@ -49,8 +48,6 @@ func fuzzTestStringSet(t *testing.T, keySz, init, count uint32) {
 	if count == 0 {
 		return
 	}
-	// make tests deterministic
-	setConstSeedSet(m, 1)
 
 	keys := genStringData(int(keySz), int(count))
 	golden := make(map[string]int, init)
@@ -84,14 +81,4 @@ func fuzzTestStringSet(t *testing.T, keySz, init, count uint32) {
 		ok := m.Contains(k)
 		assert.True(t, ok)
 	}
-}
-
-type hasher struct {
-	hash func()
-	seed uintptr
-}
-
-func setConstSeedSet[K comparable](set *Set3[K], seed uintptr) {
-	h := (*hasher)((unsafe.Pointer)(&set.hashFunction))
-	h.seed = seed
 }

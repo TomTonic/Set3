@@ -18,9 +18,8 @@ import (
 	"fmt"
 	"iter"
 	"math/bits"
+	"math/rand/v2"
 	"strings"
-
-	"github.com/dolthub/maphash"
 )
 
 const (
@@ -57,7 +56,7 @@ func set3hasZeroByte(x uint64) uint64 {
 
 // Set3 is a hash set of type K.
 type Set3[T comparable] struct {
-	hashFunction maphash.Hasher[T]
+	hashFunction RuntimeHasher[T]
 	resident     uint32
 	dead         uint32
 	elementLimit uint32
@@ -123,7 +122,7 @@ Example:
 func EmptyWithCapacity[T comparable](initialCapacity uint32) *Set3[T] {
 	reqNrOfGroups := calcReqNrOfGroups(initialCapacity)
 	result := &Set3[T]{
-		hashFunction: maphash.NewHasher[T](),
+		hashFunction: MakeRuntimeHasher[T](uint64((rand.Uint64() & 0xFFFFFFFFFFFFFFE) + 1)), // make sure seed is not zero
 		elementLimit: uint32(float64(reqNrOfGroups) * set3maxAvgGroupLoad),
 		groupCtrl:    make([]uint64, reqNrOfGroups),
 		groupSlot:    make([][set3groupSize]T, reqNrOfGroups),
@@ -1071,7 +1070,7 @@ func (thisSet *Set3[T]) rehashToNumGroups(newNumGroups uint32) {
 	copy(oldGroupCtrl, thisSet.groupCtrl)
 	copy(oldGroupSlot, thisSet.groupSlot)
 
-	thisSet.hashFunction = maphash.NewSeed(thisSet.hashFunction)
+	thisSet.hashFunction.Seed = uint64((rand.Uint64() & 0xFFFFFFFFFFFFFFE) + 1) // new seed, make sure seed is not zero
 	thisSet.elementLimit = uint32(float64(newNumGroups) * set3maxAvgGroupLoad)
 	thisSet.resident, thisSet.dead = 0, 0
 	thisSet.groupCtrl = make([]uint64, newNumGroups)
