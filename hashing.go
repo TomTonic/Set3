@@ -17,18 +17,9 @@ import (
 // deterministic re-seeding.
 type hashfunction func(unsafe.Pointer, uint64) uint64
 
-// maphashhashfunction is the type of the internal maphash hasher function. It receives
-// a pointer to the value and a uintptr seed; it returns a uintptr hash.
-// maphashhashfunction is the signature used by low-level maphash-based
-// hashers. It takes a pointer to a value and a uintptr seed and returns
-// a uintptr-sized hash. This mirrors the internal form used by the
-// stdlib/third-party implementations we interoperate with.
-type maphashhashfunction func(unsafe.Pointer, uintptr) uintptr
-
-// splitmix64 is a fast, high-quality 64-bit mixing function used to
+// splitmix64 is a fast 64-bit mixing function used to
 // scramble input words. It is not cryptographic but provides good
 // dispersion for hash table use.
-// see https://en.wikipedia.org/wiki/SplitMix64
 func splitmix64(x uint64) uint64 {
 	x += 0x9E3779B97F4A7C15
 	x = (x ^ (x >> 30)) * 0xBF58476D1CE4E5B9
@@ -131,28 +122,42 @@ func MakeRuntimeHasher[K comparable](seed uint64) RuntimeHasher[K] {
 		h.fn = hashFloat64
 	case string:
 		h.fn = hashString
-	case []byte:
+	case []byte, []int8:
 		// []byte and []uint8 are identical types; both use slice handler
-		h.fn = hashUint8Slice
-	case []int8:
-		h.fn = hashUint8Slice
+		h.fn = hashByteSlice
+	case []int, []uint, []int16, []uint16, []int32, []uint32,
+		[]int64, []uint64:
+		//h.fn = hashAnySliceAsByteSlice[K]
+		panic("slices of non-byte int/uint types were not 'comparable' at the time of writing this code, so no tests were possible")
 	default:
 		// fall back to reflect-based inspection for more cases
 		t := reflect.TypeOf(zero)
 		if t.Kind() == reflect.Slice && t.Elem().Kind() == reflect.Uint8 {
 			// subtle difference: []byte (but with different declared element type) -> use slice handler
-			h.fn = hashUint8Slice
-		} else if t.Kind() == reflect.Array && t.Elem().Kind() == reflect.Uint8 {
-			// [N]byte -> treat as raw bytes
-			h.fn = hashUint8Array[K]
+			h.fn = hashByteSlice
+		} else if t.Kind() == reflect.Array && func() bool {
+			// switch über das Element-Kind: für alle int- / uint-Typen true zurückgeben
+			switch t.Elem().Kind() {
+			case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64,
+				reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
+				return true
+			default:
+				return false
+			}
+		}() {
+			// [N]byte oder [N]int/... -> als rohe Bytes behandeln
+			h.fn = hashAsByteArray[K]
 		} else {
 			// generic approach: use internal hash function from SwissMapType
-			// api package internal/abi not allowed
+			h.fn = hashFallbackMaphash[K]
+
+			// alternative api package internal/abi is not allowed:
 			//var m map[K]struct{}
 			//mTyp := abi.TypeOf(m)
 			//maphashhasher := (*abi.SwissMapType)(unsafe.Pointer(mTyp)).Hasher
-			//h.fn = maphashhashfunctionWrapper(maphashhasher)
-			h.fn = hashFallbackMaphash[K]
+			//h.fn = func(p unsafe.Pointer, seed uint64) uint64 {
+			//	return uint64(maphashhasher(p, uintptr(seed)))
+			//}
 		}
 	}
 	return h
@@ -176,19 +181,38 @@ func hashUint8(p unsafe.Pointer, seed uint64) uint64 {
 	return splitmix64(seed ^ uint64(u))
 }
 
-// hashUint8Slice hashes a []uint8 (alias []byte) by delegating to the
+func anySliceAsByteSlice[T comparable](p unsafe.Pointer) []byte {
+	anySlice := *(*[]T)(p)
+	if len(anySlice) == 0 {
+		return nil
+	}
+	var zero T
+	elemSize := int(unsafe.Sizeof(zero))
+	l := len(anySlice) * elemSize
+	result := unsafe.Slice((*byte)(unsafe.Pointer(&anySlice[0])), l)
+	return result
+}
+
+// hashByteSlice hashes a []uint8 (alias []byte) by delegating to the
 // byte-block hashing routine. This avoids per-element overhead.
-func hashUint8Slice(p unsafe.Pointer, seed uint64) uint64 {
+func hashByteSlice(p unsafe.Pointer, seed uint64) uint64 {
 	b := *(*[]uint8)(p)
 	return hashBytesBlock(seed, b)
 }
 
-// hashUint8Array handles fixed-size arrays like [N]byte by treating the
+// hashByteSlice hashes a []uint8 (alias []byte) by delegating to the
+// byte-block hashing routine. This avoids per-element overhead.
+func hashAnySliceAsByteSlice[T comparable](p unsafe.Pointer, seed uint64) uint64 {
+	b := anySliceAsByteSlice[T](p)
+	return hashBytesBlock(seed, b)
+}
+
+// hashAsByteArray handles fixed-size arrays like [N]byte by treating the
 // array memory as a []byte and reusing the byte-block hash implementation.
-// hashUint8Array handles fixed-size arrays (e.g. [N]byte) by viewing the
+// hashAsByteArray handles fixed-size arrays (e.g. [N]byte) by viewing the
 // array memory as a []byte slice and reusing the byte-block hasher. It
 // works for N==0 as unsafe.Slice with length 0 is valid.
-func hashUint8Array[K comparable](p unsafe.Pointer, seed uint64) uint64 {
+func hashAsByteArray[K comparable](p unsafe.Pointer, seed uint64) uint64 {
 	// The size in bytes of the array type K equals the number of uint8 elements,
 	// since element size is 1. Use unsafe.Sizeof on the dereferenced value to get it.
 	size := int(unsafe.Sizeof(*(*K)(p)))
@@ -296,15 +320,6 @@ func hashString(p unsafe.Pointer, seed uint64) uint64 {
 	return hashBytesBlock(seed, b)
 }
 
-// maphashhashfunctionWrapper adapts a maphash-style function (taking a
-// uintptr seed and returning a uintptr) into our internal hashfunction
-// type which uses uint64 seeds and results.
-func maphashhashfunctionWrapper(fn maphashhashfunction) hashfunction {
-	return func(p unsafe.Pointer, seed uint64) uint64 {
-		return uint64(fn(p, uintptr(seed)))
-	}
-}
-
 // hashFallbackMaphash is the generic fallback hasher which uses
 // stdlib `hash/maphash` to hash arbitrary comparable types by calling
 // `maphash.WriteComparable`. This is slower than the specialized
@@ -322,13 +337,21 @@ func hashFallbackMaphash[K comparable](p unsafe.Pointer, seed uint64) uint64 {
 // maphash.Seed value; that relies on the concrete layout of Seed and
 // is pragmatic but not guaranteed by the language spec.
 func seedToMaphashSeed(seed uint64) maphash.Seed {
+	// Derive maphash.Seed deterministically from the provided uint64 seed
+	// by copying the 8 bytes into the Seed value. We avoid calling
+	// maphash.MakeSeed() here so that a seed value of 0 remains
+	// deterministic (useful for reproducible tests and deterministic
+	// behavior across runs).
+	// Ensure we never produce the all-zero Seed value, which the
+	// stdlib treats as uninitialized. For a uint64 input of 0 we map it
+	// to a fixed non-zero constant so behavior remains deterministic.
 	if seed == 0 {
-		return maphash.MakeSeed()
+		seed = 0x9E3779B97F4A7C15
 	}
 	var sd maphash.Seed
 	p := unsafe.Pointer(&sd)
 	buf := (*[8]byte)(p)
-	binary.LittleEndian.PutUint64(buf[0:8], seed)
+	*(*uint64)(unsafe.Pointer(&buf[0])) = seed // for a hashset the byte order does not matter
 	return sd
 }
 
