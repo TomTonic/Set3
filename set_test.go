@@ -947,3 +947,91 @@ func TestRemoveAllOf(t *testing.T) {
 		t.Errorf("RemoveAllOf incorrectly removed element 1 with nil arguments")
 	}
 }
+
+func expectedHasZeroByte(x uint64) uint64 {
+	var res uint64
+	for i := range 8 {
+		if ((x >> (8 * i)) & 0xFF) == 0 {
+			res |= uint64(0x80) << (8 * i)
+		}
+	}
+	return res
+}
+
+func TestSet3HasZeroByte_Table(t *testing.T) {
+	cases := []uint64{
+		0x0000000000000000,
+		0xFFFFFFFFFFFFFFFF,
+		0x00FF00FF00FF00FF,
+		0xFF00FF00FF00FF00,
+		0x1122334455667788,
+		0x1122330044556677, // one zero byte in middle
+		0x8000000000000080, // zero bytes in between high bytes
+	}
+
+	for _, in := range cases {
+		got := set3hasZeroByte(in)
+		want := expectedHasZeroByte(in)
+		if got != want {
+			t.Fatalf("set3hasZeroByte(0x%016x) = 0x%016x; want 0x%016x", in, got, want)
+		}
+	}
+}
+
+func TestSet3HasZeroByte_Random(t *testing.T) {
+	r := rand.New(rand.NewSource(42))
+	for i := 0; i < 1000; i++ {
+		v := r.Uint64()
+		got := set3hasZeroByte(v)
+		want := expectedHasZeroByte(v)
+		if got != want {
+			t.Fatalf("random #%d: set3hasZeroByte(0x%016x) = 0x%016x; want 0x%016x", i, v, got, want)
+		}
+	}
+}
+
+func TestSet3NextMatch_SingleBits(t *testing.T) {
+	cases := []int{0, 1, 7, 8, 15, 16, 31, 32, 63}
+	for _, pos := range cases {
+		var b uint64 = 1 << uint(pos)
+		orig := b
+		got := set3nextMatch(&b)
+		want := pos >> 3
+		if got != want {
+			t.Fatalf("pos=%d: got index %d, want %d", pos, got, want)
+		}
+		if b != 0 {
+			t.Fatalf("pos=%d: expected bit cleared, remaining 0x%016x (orig 0x%016x)", pos, b, orig)
+		}
+	}
+}
+
+func TestSet3NextMatch_SequenceOrderAndClear(t *testing.T) {
+	var mask uint64 = (1 << 7) | (1 << 15) | (1 << 31) | (1 << 63) // bytes 0,1,3,7 (high bit of each byte)
+	expected := []int{0, 1, 3, 7}
+	for i, want := range expected {
+		got := set3nextMatch(&mask)
+		if got != want {
+			t.Fatalf("step %d: got %d, want %d", i, got, want)
+		}
+	}
+	if mask != 0 {
+		t.Fatalf("mask not fully cleared, remaining 0x%016x", mask)
+	}
+}
+
+func TestSet3NextMatch_HighLowMix(t *testing.T) {
+	// bits at positions 0,7,8,15 -> bytes 0,0,1,1 -> expected order: bit0 (byte0), bit7 (byte0, higher pos still in same byte order), then byte1 bits
+	var b uint64 = (1 << 0) | (1 << 7) | (1 << 8) | (1 << 15)
+	// Expected sequence: least significant set bit positions are 0,7,8,15 -> bytes 0,0,1,1 -> returns 0,0,1,1
+	wantSeq := []int{0, 0, 1, 1}
+	for i, want := range wantSeq {
+		got := set3nextMatch(&b)
+		if got != want {
+			t.Fatalf("step %d: got %d, want %d", i, got, want)
+		}
+	}
+	if b != 0 {
+		t.Fatalf("expected b cleared, got 0x%016x", b)
+	}
+}
