@@ -22,40 +22,18 @@ import (
 	"testing"
 	"time"
 
+	"github.com/TomTonic/rtcompare"
 	"github.com/stretchr/testify/assert"
 )
 
-// see https://en.wikipedia.org/wiki/Xorshift#xorshift*
-// This PRNG is deterministic and has a period of 2^64-1. This way we can ensure, we always get a new 'random' number, that is unknown to the set.
-type prngState struct {
-	state uint64
-	round uint64 // for debugging purposes
-}
-
-func (thisState *prngState) Uint64() uint64 {
-	x := thisState.state
-	x ^= x >> 12
-	x ^= x << 25
-	x ^= x >> 27
-	thisState.state = x
-	thisState.round++
-	return x * 0x2545F4914F6CDD1D
-}
-
-func (thisState *prngState) Uint32() uint32 {
-	x := thisState.Uint64()
-	x >>= 32 // the upper 32 bit have better 'randomness', see https://en.wikipedia.org/wiki/Xorshift#xorshift*
-	return uint32(x)
-}
-
 type searchDataDriver struct {
-	rng       *prngState
+	rng       *rtcompare.DPRNG
 	setValues []uint64
 	hitRatio  float64
 }
 
 func newSearchDataDriver(setSize int, targetHitRatio float64, seed uint64) *searchDataDriver {
-	s := prngState{state: seed}
+	s := rtcompare.DPRNG{State: seed}
 	vals := uniqueRandomNumbers(setSize, &s)
 	result := &searchDataDriver{
 		rng: &s,
@@ -85,7 +63,7 @@ func (thisCfg *searchDataDriver) nextSearchValue() uint64 {
 	return result
 }
 
-func uniqueRandomNumbers(setSize int, rng *prngState) []uint64 {
+func uniqueRandomNumbers(setSize int, rng *rtcompare.DPRNG) []uint64 {
 	result := make([]uint64, setSize)
 	for i := 0; i < setSize; i++ {
 		result[i] = rng.Uint64()
@@ -93,11 +71,11 @@ func uniqueRandomNumbers(setSize int, rng *prngState) []uint64 {
 	return result
 }
 
-func shuffleArray(input []uint64, rng *prngState, rounds int) []uint64 {
+func shuffleArray(input []uint64, rng *rtcompare.DPRNG, rounds int) []uint64 {
 	a := input // copy array
 	for r := 0; r < rounds; r++ {
 		for i := len(a) - 1; i > 0; i-- {
-			j := rng.Uint32() % uint32(i+1)
+			j := rng.Uint64() % uint64(i+1)
 			a[i], a[j] = a[j], a[i]
 		}
 	}
@@ -413,51 +391,6 @@ var config = []struct {
 	{initSetSize: 21, finalSetSize: 298, targetHitRatio: 0.3, seed: 0x1234567890ABCDEF, itersPerRoundFill: 10287, itersPerRoundFind: 10_000_000, rounds: 11},
 	{initSetSize: 21, finalSetSize: 299, targetHitRatio: 0.3, seed: 0x1234567890ABCDEF, itersPerRoundFill: 10161, itersPerRoundFind: 10_000_000, rounds: 11},
 	{initSetSize: 21, finalSetSize: 300, targetHitRatio: 0.3, seed: 0x1234567890ABCDEF, itersPerRoundFill: 10037, itersPerRoundFind: 10_000_000, rounds: 11},
-}
-
-func TestPrngSeqLength(t *testing.T) {
-	state := prngState{state: 0x1234567890ABCDEF}
-	limit := uint32(30_000_000)
-	set := EmptyWithCapacity[uint64](limit * 7 / 5)
-	counter := uint32(0)
-	for set.Size() < limit {
-		set.Add(state.Uint64())
-		counter++
-	}
-	assert.True(t, counter == limit, "sequence < limit")
-}
-
-func TestPrngDeterminism(t *testing.T) {
-	state1 := prngState{state: 0x1234567890ABCDEF}
-	state2 := prngState{state: 0x1234567890ABCDEF}
-	limit := 30_000_000
-	for i := 0; i < limit; i++ {
-		v1 := state1.Uint64()
-		v2 := state2.Uint64()
-		assert.True(t, v1 == v2, "in sync: values not equal in round %d", i)
-	}
-	_ = state2.Uint64() // skip one value to get both prng out of sync
-	for i := 0; i < limit; i++ {
-		v1 := state1.Uint64()
-		v2 := state2.Uint64()
-		assert.False(t, v1 == v2, "out of sync: values equal in round %d", i)
-	}
-	_ = state1.Uint64() // get both prng back in sync
-	for i := 0; i < limit; i++ {
-		v1 := state1.Uint64()
-		v2 := state2.Uint64()
-		assert.True(t, v1 == v2, "back in sync: values not equal in round %d", i)
-	}
-}
-
-func TestUniqueRandomNumbersDeterministic(t *testing.T) {
-	s1 := prngState{state: 0x1234567890ABCDEF}
-	s2 := prngState{state: 0x1234567890ABCDEF}
-
-	urn1 := uniqueRandomNumbers(5000, &s1)
-	urn2 := uniqueRandomNumbers(5000, &s2)
-	assert.True(t, slicesEqual(urn1, urn2), "slices not equal")
-
 }
 
 func TestSearchDataDriver(t *testing.T) {
