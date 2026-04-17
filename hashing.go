@@ -3,7 +3,6 @@ package set3
 import (
 	"encoding/binary"
 	"hash/maphash"
-	"math"
 	"reflect"
 	"unsafe"
 )
@@ -16,55 +15,6 @@ import (
 // representation of the value and incorporate the seed to allow
 // deterministic re-seeding.
 type hashfunction func(unsafe.Pointer, uint64) uint64
-
-// splitmix64 is a fast 64-bit mixing function used to
-// scramble input words. It is not cryptographic but provides good
-// dispersion for hash table use.
-func splitmix64(x uint64) uint64 {
-	x += 0x9E3779B97F4A7C15
-	x = (x ^ (x >> 30)) * 0xBF58476D1CE4E5B9
-	x = (x ^ (x >> 27)) * 0x94D049BB133111EB
-	return x ^ (x >> 31)
-}
-
-// hashBytesBlock hashes a byte slice using 64-bit block mixing.
-// It consumes 8-byte words with LittleEndian decoding and mixes each
-// block through splitmix64; the tail (0..7 bytes) is folded in and the
-// length is incorporated to avoid collisions for different-length inputs.
-func hashBytesBlock(seed uint64, b []byte) uint64 {
-	h := seed ^ 0x9E3779B97F4A7C15
-	i, n := 0, len(b)
-	for i+8 <= n {
-		v := binary.LittleEndian.Uint64(b[i:])
-		h = splitmix64(h ^ v)
-		i += 8
-	}
-	// Tail 0..7 Bytes
-	var tail uint64
-	switch n - i {
-	case 7:
-		tail |= uint64(b[i+6]) << 48
-		fallthrough
-	case 6:
-		tail |= uint64(b[i+5]) << 40
-		fallthrough
-	case 5:
-		tail |= uint64(b[i+4]) << 32
-		fallthrough
-	case 4:
-		tail |= uint64(b[i+3]) << 24
-		fallthrough
-	case 3:
-		tail |= uint64(b[i+2]) << 16
-		fallthrough
-	case 2:
-		tail |= uint64(b[i+1]) << 8
-		fallthrough
-	case 1:
-		tail |= uint64(b[i])
-	}
-	return splitmix64(h ^ tail ^ uint64(n))
-}
 
 // RuntimeHasher holds a per-type runtime hash function and a seed.
 // It is intended to be created by MakeRuntimeHasher and called by the
@@ -93,35 +43,35 @@ func MakeRuntimeHasher[K comparable](seed uint64) RuntimeHasher[K] {
 
 	switch any(zero).(type) {
 	case uint8:
-		h.fn = hashUint8
+		h.fn = swirlByte
 	case int8:
-		h.fn = hashInt8
+		h.fn = swirlByte
 	case bool:
 		h.fn = hashBool
 	case uint16:
-		h.fn = hashUint16
+		h.fn = hashI16SM
 	case int16:
-		h.fn = hashInt16
+		h.fn = hashI16SM
 	case uint32:
-		h.fn = hashUint32
+		h.fn = hashI32WHdet
 	case int32:
-		h.fn = hashInt32
+		h.fn = hashI32WHdet
 	case uint64:
-		h.fn = hashUint64
+		h.fn = hashI64WHdet
 	case int64:
-		h.fn = hashInt64
+		h.fn = hashI64WHdet
 	case uint:
-		h.fn = hashUint
+		h.fn = hashInt
 	case int:
 		h.fn = hashInt
 	case uintptr:
-		h.fn = hashUintptr
+		h.fn = hashPtr
 	case float32:
-		h.fn = hashFloat32
+		h.fn = hashF32SM
 	case float64:
-		h.fn = hashFloat64
+		h.fn = hashF64SM
 	case string:
-		h.fn = hashString
+		h.fn = hashStringSM
 	case []byte, []int8:
 		// []byte and []uint8 are identical types; both use slice handler
 		h.fn = hashByteSlice
@@ -145,7 +95,7 @@ func MakeRuntimeHasher[K comparable](seed uint64) RuntimeHasher[K] {
 				return false
 			}
 		}() {
-			// [N]byte oder [N]int/... -> als rohe Bytes behandeln
+			// [N]byte, [N]uint16, etc. -> treat as raw bytes
 			h.fn = hashAsByteArray[K]
 		} else {
 			// generic approach: use internal hash function from SwissMapType
@@ -163,22 +113,52 @@ func MakeRuntimeHasher[K comparable](seed uint64) RuntimeHasher[K] {
 	return h
 }
 
-// hashBool hashes a boolean value by mapping false->0 and true->1 and
-// mixing with the seed via splitmix64.
-func hashBool(p unsafe.Pointer, seed uint64) uint64 {
-	b := *(*bool)(p)
-	var v uint64
-	if b {
-		v = 1
+// hashBytesBlock hashes a byte slice using 64-bit block mixing.
+// It consumes 8-byte words with LittleEndian decoding and mixes each
+// block through splitmix64; the tail (0..7 bytes) is folded in and the
+// length is incorporated to avoid collisions for different-length inputs.
+func hashBytesBlock(seed uint64, b []byte) uint64 {
+	h := seed ^ p0
+	i, n := 0, len(b)
+	for i+8 <= n {
+		v := binary.NativeEndian.Uint64(b[i:])
+		h = splitmix64(h ^ v)
+		i += 8
 	}
-	return splitmix64(seed ^ v)
+	// Tail 0..7 Bytes
+	var tail uint64
+	switch n - i {
+	case 7:
+		tail |= uint64(b[i+6]) << 48
+		fallthrough
+	case 6:
+		tail |= uint64(b[i+5]) << 40
+		fallthrough
+	case 5:
+		tail |= uint64(b[i+4]) << 32
+		fallthrough
+	case 4:
+		tail |= uint64(b[i+3]) << 24
+		fallthrough
+	case 3:
+		tail |= uint64(b[i+2]) << 16
+		fallthrough
+	case 2:
+		tail |= uint64(b[i+1]) << 8
+		fallthrough
+	case 1:
+		tail |= uint64(b[i])
+	case 0:
+		tail = p1
+	}
+	return splitmix64(h ^ tail ^ uint64(n)*p2)
 }
 
-// hashUint8 hashes a single uint8 by xoring it into the seed and
-// applying splitmix64.
-func hashUint8(p unsafe.Pointer, seed uint64) uint64 {
-	u := *(*uint8)(p)
-	return splitmix64(seed ^ uint64(u))
+// hashByteSlice hashes a []uint8 (alias []byte) by delegating to the
+// byte-block hashing routine. This avoids per-element overhead.
+func hashByteSlice(p unsafe.Pointer, seed uint64) uint64 {
+	b := *(*[]uint8)(p)
+	return hashBytesBlock(seed, b)
 }
 
 func anySliceAsByteSlice[T comparable](p unsafe.Pointer) []byte {
@@ -191,13 +171,6 @@ func anySliceAsByteSlice[T comparable](p unsafe.Pointer) []byte {
 	l := len(anySlice) * elemSize
 	result := unsafe.Slice((*byte)(unsafe.Pointer(&anySlice[0])), l)
 	return result
-}
-
-// hashByteSlice hashes a []uint8 (alias []byte) by delegating to the
-// byte-block hashing routine. This avoids per-element overhead.
-func hashByteSlice(p unsafe.Pointer, seed uint64) uint64 {
-	b := *(*[]uint8)(p)
-	return hashBytesBlock(seed, b)
 }
 
 // hashByteSlice hashes a []uint8 (alias []byte) by delegating to the
@@ -220,104 +193,22 @@ func hashAsByteArray[K comparable](p unsafe.Pointer, seed uint64) uint64 {
 	return hashBytesBlock(seed, b)
 }
 
-// hashInt8 hashes a single int8 by reinterpreting its bits as uint8 and
-// mixing with the seed.
-func hashInt8(p unsafe.Pointer, seed uint64) uint64 {
-	v := *(*int8)(p)
-	return splitmix64(seed ^ uint64(uint8(v)))
-}
-
-// hashUint16 hashes a uint16 value by promoting to uint64 and applying splitmix64.
-func hashUint16(p unsafe.Pointer, seed uint64) uint64 {
-	u := *(*uint16)(p)
-	return splitmix64(seed ^ uint64(u))
-}
-
-// hashInt16 hashes an int16 value by reinterpreting its bits and mixing.
-func hashInt16(p unsafe.Pointer, seed uint64) uint64 {
-	v := *(*int16)(p)
-	return splitmix64(seed ^ uint64(uint16(v)))
-}
-
-// hashUint32 hashes a uint32 by promoting to uint64 and mixing.
-func hashUint32(p unsafe.Pointer, seed uint64) uint64 {
-	u := *(*uint32)(p)
-	return splitmix64(seed ^ uint64(u))
-}
-
-// hashInt32 hashes an int32 by reinterpreting bits as uint32 and mixing.
-func hashInt32(p unsafe.Pointer, seed uint64) uint64 {
-	v := *(*int32)(p)
-	return splitmix64(seed ^ uint64(uint32(v)))
-}
-
-// hashUint64 hashes a uint64 by mixing it with the seed using splitmix64.
-func hashUint64(p unsafe.Pointer, seed uint64) uint64 {
-	u := *(*uint64)(p)
-	return splitmix64(seed ^ u)
-}
-
-// hashInt64 hashes an int64 by reinterpreting its bit pattern and mixing.
-func hashInt64(p unsafe.Pointer, seed uint64) uint64 {
-	v := *(*int64)(p)
-	return splitmix64(seed ^ uint64(v))
-}
-
-// hashUint handles the platform-sized unsigned integer type.
-func hashUint(p unsafe.Pointer, seed uint64) uint64 {
-	u := *(*uint)(p)
-	return splitmix64(seed ^ uint64(u))
-}
-
-// hashInt handles the platform-sized signed integer type.
-func hashInt(p unsafe.Pointer, seed uint64) uint64 {
-	v := *(*int)(p)
-	return splitmix64(seed ^ uint64(v))
-}
-
-// hashUintptr hashes a uintptr value by casting it to uint64 and mixing.
-func hashUintptr(p unsafe.Pointer, seed uint64) uint64 {
-	u := *(*uintptr)(p)
-	return splitmix64(seed ^ uint64(u))
-}
-
-// hashFloat32 hashes a float32 by canonicalizing zero and NaN and then
-// hashing the IEEE-754 bit representation.
-func hashFloat32(p unsafe.Pointer, seed uint64) uint64 {
-	f := *(*float32)(p)
-	var bits uint64
-	if f == 0 {
-		bits = 0
-	} else if math.IsNaN(float64(f)) {
-		bits = 0x7fc00000 // canonical quiet NaN for float32
-	} else {
-		bits = uint64(math.Float32bits(f))
-	}
-	return splitmix64(seed ^ bits)
-}
-
-// hashFloat64 hashes a float64 by canonicalizing zero and NaN and then
-// hashing the IEEE-754 bit representation.
-func hashFloat64(p unsafe.Pointer, seed uint64) uint64 {
-	f := *(*float64)(p)
-	var bits uint64
-	if f == 0 {
-		bits = 0
-	} else if math.IsNaN(f) {
-		bits = 0x7ff8000000000000 // canonical quiet NaN for float64
-	} else {
-		bits = math.Float64bits(f)
-	}
-	return splitmix64(seed ^ bits)
-}
-
-// hashString hashes a Go string by obtaining a byte view of the string
+// hashStringSM hashes a Go string by obtaining a byte view of the string
 // data (without allocations) and delegating to the byte-block hasher.
-func hashString(p unsafe.Pointer, seed uint64) uint64 {
+func hashStringSM(p unsafe.Pointer, seed uint64) uint64 {
 	s := *(*string)(p)
 	// Go 1.20+: unsafe.StringData(s) → *byte
 	b := unsafe.Slice(unsafe.StringData(s), len(s))
 	return hashBytesBlock(seed, b)
+}
+
+// hashStringMH uses the hasher from  stdlib `hash/maphash` to hash
+// Go strings.
+func hashStringMH(p unsafe.Pointer, seed uint64) uint64 {
+	s := *(*string)(p)
+	mhs := seedToMaphashSeed(seed)
+	h := maphash.String(mhs, s)
+	return h
 }
 
 // hashFallbackMaphash is the generic fallback hasher which uses
@@ -330,6 +221,15 @@ func hashFallbackMaphash[K comparable](p unsafe.Pointer, seed uint64) uint64 {
 	mh.SetSeed(seedToMaphashSeed(seed))
 	maphash.WriteComparable(&mh, k)
 	return mh.Sum64()
+}
+
+// hashBytesMH uses the hasher from  stdlib `hash/maphash` to hash
+// byte slices
+func hashBytesMH(p unsafe.Pointer, seed uint64) uint64 {
+	b := *(*[]uint8)(p)
+	mhs := seedToMaphashSeed(seed)
+	h := maphash.Bytes(mhs, b)
+	return h
 }
 
 // seedToMaphashSeed derives a deterministic maphash.Seed from a

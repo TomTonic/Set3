@@ -17,6 +17,7 @@ package set3
 import (
 	"fmt"
 	"iter"
+	"math"
 	"math/bits"
 	"math/rand/v2"
 	"strings"
@@ -33,23 +34,40 @@ const (
 	set3AllDeleted uint64 = 0xFEFEFEFEFEFEFEFE
 	set3Empty      uint64 = 0b0000_1000_0000
 	set3Deleted    uint64 = 0b0000_1111_1110
-	set3Sentinel   uint64 = 0b0000_1111_1111
+	//set3Sentinel   uint64 = 0b0000_1111_1111
 )
 
+// Returns a mask indicating which slots in the control word m match the
+// given h2 value. For each matching slot in m, the corresponding byte
+// in the result is 0x80; otherwise, it is 0x00.
 func set3ctlrMatchH2(m uint64, h uint64) uint64 {
 	return set3hasZeroByte(m ^ (set3loBits * h))
 }
 
+// Returns a mask indicating which slots in the control word m are empty.
+// For each empty slot in m, the corresponding byte in the result is 0x80;
+// otherwise, it is 0x00.
 func set3ctlrMatchEmpty(m uint64) uint64 {
 	return set3hasZeroByte(m ^ set3hiBits)
 }
 
+// Returns the byte number of the next set bit in b (starting from LSB).
+// Designed to be used with the result of set3ctlrMatchH2 or set3ctlrMatchEmpty:
+// each byte in b is either 0x00 or 0x80; thus, after matching Empty or the
+// H2 value at all positions at once, this function can be used to iterate
+// over all matching positions.
+// Clears that bit in b before returning, so that repeated calls return
+// the next matching position. If no (more) bit is set in b, then this function
+// returns 0.
 func set3nextMatch(b *uint64) int {
-	s := bits.TrailingZeros64(*b)
-	*b &= ^(1 << s) // clear bit |s|
-	return s >> 3   // div by 8
+	s := bits.TrailingZeros64(*b) // returns the number of consecutive zero bits starting from the least-significant bit (LSB), e.g., for b=0b0010_1000, it returns 3
+	*b &= ^(1 << s)               // clear bit |s|, i.e., the first bit that was set starting from the LSB
+	return s >> 3                 // div by 8
 }
 
+// Returns a mask indicating which bytes in x are zero.
+// For each byte in x that is zero, the corresponding byte in the result
+// is 0x80; otherwise, it is 0x00.
 func set3hasZeroByte(x uint64) uint64 {
 	return ((x - set3loBits) & ^(x)) & set3hiBits
 }
@@ -57,11 +75,11 @@ func set3hasZeroByte(x uint64) uint64 {
 // Set3 is a hash set of type K.
 type Set3[T comparable] struct {
 	hashFunction RuntimeHasher[T]
+	groupCtrl    []uint64
+	groupSlot    [][set3groupSize]T
 	resident     uint32
 	dead         uint32
 	elementLimit uint32
-	groupCtrl    []uint64
-	groupSlot    [][set3groupSize]T
 }
 
 /*
@@ -121,13 +139,14 @@ Example:
 */
 func EmptyWithCapacity[T comparable](initialCapacity uint32) *Set3[T] {
 	reqNrOfGroups := calcReqNrOfGroups(initialCapacity)
+	nrOfGroups := nextPrime(uint64(reqNrOfGroups))
 	result := &Set3[T]{
 		hashFunction: MakeRuntimeHasher[T](uint64((rand.Uint64() & 0xFFFFFFFFFFFFFFE) + 1)), // make sure seed is not zero
-		elementLimit: uint32(float64(reqNrOfGroups) * set3maxAvgGroupLoad),
-		groupCtrl:    make([]uint64, reqNrOfGroups),
-		groupSlot:    make([][set3groupSize]T, reqNrOfGroups),
+		groupCtrl:    make([]uint64, nrOfGroups),
+		groupSlot:    make([][set3groupSize]T, nrOfGroups),
+		elementLimit: uint32(float64(nrOfGroups) * set3maxAvgGroupLoad),
 	}
-	for i := range reqNrOfGroups {
+	for i := range nrOfGroups {
 		result.groupCtrl[i] = set3AllEmpty
 	}
 	return result
@@ -135,8 +154,8 @@ func EmptyWithCapacity[T comparable](initialCapacity uint32) *Set3[T] {
 
 func calcReqNrOfGroups(reqCapa uint32) uint32 {
 	reqNrOfGroups := uint32((float64(reqCapa) + set3maxAvgGroupLoad - 1) / set3maxAvgGroupLoad)
-	if reqNrOfGroups == 0 {
-		reqNrOfGroups = 1
+	if reqNrOfGroups <= 1 {
+		return 1
 	}
 	return reqNrOfGroups
 }
@@ -205,11 +224,11 @@ Example:
 func (thisSet *Set3[T]) Clone() *Set3[T] {
 	result := &Set3[T]{
 		hashFunction: thisSet.hashFunction,
+		groupCtrl:    make([]uint64, len(thisSet.groupCtrl)),
+		groupSlot:    make([][set3groupSize]T, len(thisSet.groupSlot)),
 		elementLimit: thisSet.elementLimit,
 		resident:     thisSet.resident,
 		dead:         thisSet.dead,
-		groupCtrl:    make([]uint64, len(thisSet.groupCtrl)),
-		groupSlot:    make([][set3groupSize]T, len(thisSet.groupSlot)),
 	}
 	copy(result.groupCtrl, thisSet.groupCtrl)
 	copy(result.groupSlot, thisSet.groupSlot)
@@ -276,13 +295,20 @@ func getGroupIndex(hash, groupCount uint64) uint64 {
 	// return (H1 * groupCount) >> 32
 
 	// no. 3b: same as no. 3
-	a := hash >> 32
-	b := hash >> 7
-	c := a ^ b
-	d := c & 0x0000_0000_ffff_ffff
-	e := d * groupCount
-	f := e >> 32
-	return f
+
+	// a := hash >> 32
+	// b := hash >> 7
+	// c := a ^ b
+	// d := c & 0x0000_0000_ffff_ffff
+	// e := d * groupCount
+	// f := e >> 32
+	// return f
+
+	// in contradiction to the original abseil implementation, we do not mask the lower 7 bits away,
+	// to use all entropy from the hash value
+	hi, _ := bits.Mul64(hash, groupCount)
+	// we only need the high 64 bits, which is equivalent to (hash * groupCount) >> 64
+	return hi
 }
 
 /*
@@ -419,7 +445,7 @@ func (thisSet *Set3[T]) MutableRange() iter.Seq[T] {
 		for i, ctrl := range thisSet.groupCtrl {
 			if ctrl&set3hiBits != set3hiBits { // not all empty or deleted
 				slot := &(thisSet.groupSlot[i])
-				for i := 0; i < set3groupSize; i++ {
+				for i := range set3groupSize {
 					if isAnElementAt(ctrl, i) {
 						if !yield(slot[i]) {
 							return
@@ -443,15 +469,15 @@ Example:
 	}
 */
 func (thisSet *Set3[T]) ImmutableRange() iter.Seq[T] {
+	localCtrl := make([]uint64, len(thisSet.groupCtrl))
+	localSlot := make([][set3groupSize]T, len(thisSet.groupSlot))
+	copy(localCtrl, thisSet.groupCtrl)
+	copy(localSlot, thisSet.groupSlot)
 	return func(yield func(T) bool) {
-		localCtrl := make([]uint64, len(thisSet.groupCtrl))
-		localSlot := make([][set3groupSize]T, len(thisSet.groupSlot))
-		copy(localCtrl, thisSet.groupCtrl)
-		copy(localSlot, thisSet.groupSlot)
 		for i, ctrl := range localCtrl {
 			if ctrl&set3hiBits != set3hiBits { // not all empty or deleted
 				slot := &(localSlot[i])
-				for i := 0; i < set3groupSize; i++ {
+				for i := range set3groupSize {
 					if isAnElementAt(ctrl, i) {
 						if !yield(slot[i]) {
 							return
@@ -493,7 +519,8 @@ Example:
 */
 func (thisSet *Set3[T]) Add(element T) {
 	if thisSet.resident >= thisSet.elementLimit {
-		thisSet.rehashToNumGroups(thisSet.calcNextGroupCount())
+		nextGroupCount := calcNextGroupCount(uint32(len(thisSet.groupCtrl)))
+		thisSet.rehashToNumGroups(nextGroupCount)
 	}
 	hash := thisSet.hashFunction.Hash(element)
 	H2 := (hash & 0x0000_0000_0000_007f)
@@ -507,7 +534,7 @@ func (thisSet *Set3[T]) Add(element T) {
 			for H2matches != 0 {
 				s := set3nextMatch(&H2matches)
 				if element == slot[s] {
-					// found - already in Set3, just return
+					// found - element already in thisSet, just return
 					return
 				}
 			}
@@ -518,7 +545,7 @@ func (thisSet *Set3[T]) Add(element T) {
 		emptyMatches := set3ctlrMatchEmpty(ctrl)
 
 		if emptyMatches != 0 {
-			// empty spot -> element can't be in Set3 (see Contains) -> insert
+			// empty spot -> element can't be in thisSet (see Contains) -> insert
 			s := set3nextMatch(&emptyMatches)
 			thisSet.groupCtrl[currentGroupIndex] = setCTRLat(ctrl, H2, s)
 			thisSet.groupSlot[currentGroupIndex][s] = element
@@ -630,6 +657,7 @@ func (thisSet *Set3[T]) Unite(thatSet *Set3[T]) *Set3[T] {
 	return result
 }
 
+// Sets the byte at position pos in ctrl to val and returns the new ctrl value.
 func setCTRLat(ctrl, val uint64, pos int) uint64 {
 	shift := pos << 3                // *8
 	ctrl &= ^(uint64(0xFF) << shift) // clear byte
@@ -637,6 +665,8 @@ func setCTRLat(ctrl, val uint64, pos int) uint64 {
 	return ctrl
 }
 
+// Returns true if at position pos in ctrl an actual element is stored
+// (i.e., neither set3Empty nor set3Deleted)
 func isAnElementAt(ctrl uint64, pos int) bool {
 	shift := pos << 3               // *8
 	ctrl &= (uint64(0x80) << shift) // clear all other bits
@@ -669,14 +699,13 @@ func (thisSet *Set3[T]) Remove(element T) bool {
 			for H2matches != 0 {
 				s := set3nextMatch(&H2matches)
 				if element == slot[s] {
-					// found - already in Set3, just return
+					// Found.
 					// optimization: if |m.ctrl[g]| contains any empty
-					// metadata bytes, we can physically delete |element|
+					// metadata byte, we can actually delete |element|
 					// rather than placing a tombstone.
-					// The observation is that any probes into group |g|
-					// would already be terminated by the existing empty
-					// slot, and therefore reclaiming slot |s| will not
-					// cause premature termination of probes into |g|.
+					// Any probes into group |g| would already be terminated
+					// by the existing empty slot. Therefore, reclaiming slot
+					// |s| will not cause premature termination of probes into |g|.
 					if set3ctlrMatchEmpty(ctrl) != 0 {
 						thisSet.groupCtrl[currentGroupIndex] = setCTRLat(ctrl, set3Empty, s)
 						thisSet.resident--
@@ -684,8 +713,8 @@ func (thisSet *Set3[T]) Remove(element T) bool {
 						thisSet.groupCtrl[currentGroupIndex] = setCTRLat(ctrl, set3Deleted, s)
 						thisSet.dead++
 						/*
-							// unfortunately, this is an invalid optimization, as the algorithm might stop searching for elements to early.
-							// if they spilled over in the next group, we unfortunately need all the tumbstones...
+							// unfortunately, the following would be an invalid optimization. The algorithm might stop searching for elements too early.
+							// In cases where the elements with a matching H2 spill over in the next group, we need the tombstones.
 							if group.ctrl == set3AllDeleted {
 								group.ctrl = set3AllEmpty
 								thisSet.dead -= set3groupSize
@@ -814,7 +843,9 @@ func (thisSet *Set3[T]) Subtract(thatSet *Set3[T]) *Set3[T] {
 }
 
 /*
-Clear removes all elements from thisSet.
+Clear removes all elements from thisSet. Please note that the backing data structure is not resized,
+so after Clear no memory is freed. If you want to free memory, create a new Set3 via [Empty] or
+[EmptyWithCapacity].
 
 Example:
 
@@ -824,14 +855,13 @@ Example:
 	set.Clear()  // set will be empty, Count() will return 0
 */
 func (thisSet *Set3[T]) Clear() {
-	// var k T
+	var k T
 	for grpidx := range len(thisSet.groupCtrl) {
 		thisSet.groupCtrl[grpidx] = set3AllEmpty
-		/*
-			for j := range set3groupSize {
-				thisSet.groupSlot[grpidx][j] = k
-			}
-		*/
+		// make sure to clear all slots to avoid memory leaks in case T contains pointers
+		for j := range set3groupSize {
+			thisSet.groupSlot[grpidx][j] = k
+		}
 	}
 	thisSet.resident, thisSet.dead = 0, 0
 }
@@ -1018,12 +1048,10 @@ func (thisSet *Set3[T]) Size() uint32 {
 	return thisSet.resident - thisSet.dead
 }
 
-func (thisSet *Set3[T]) calcNextGroupCount() uint32 {
-	n := len(thisSet.groupCtrl) * 2
-	if thisSet.dead >= (thisSet.resident / 2) {
-		n = len(thisSet.groupCtrl)
-	}
-	return uint32(n) //nolint:gosec
+func calcNextGroupCount(currentGroupCount uint32) uint32 {
+	n := uint32(max(math.Ceil(float64(currentGroupCount)*3.0/2.0), 2))
+	p := nextPrime(uint64(n))
+	return uint32(p)
 }
 
 /*
@@ -1038,8 +1066,9 @@ Example:
 	set.Rehash() // saves memory consumed by set
 */
 func (thisSet *Set3[T]) Rehash() {
-	numGroups := calcReqNrOfGroups(thisSet.Size()) //nolint:gosec
-	thisSet.rehashToNumGroups(numGroups)
+	reqNumGroups := calcReqNrOfGroups(thisSet.Size()) //nolint:gosec
+	numGroups := nextPrime(uint64(reqNumGroups))
+	thisSet.rehashToNumGroups(uint32(numGroups))
 }
 
 /*
@@ -1059,8 +1088,9 @@ func (thisSet *Set3[T]) RehashToCapacity(newCapacity uint32) {
 	if newCapacity < thisSet.Size() {
 		return
 	}
-	newNumGroups := calcReqNrOfGroups(newCapacity)
-	thisSet.rehashToNumGroups(newNumGroups)
+	reqNumGroups := calcReqNrOfGroups(newCapacity)
+	newNumGroups := nextPrime(uint64(reqNumGroups))
+	thisSet.rehashToNumGroups(uint32(newNumGroups))
 }
 
 func (thisSet *Set3[T]) rehashToNumGroups(newNumGroups uint32) {
@@ -1071,10 +1101,10 @@ func (thisSet *Set3[T]) rehashToNumGroups(newNumGroups uint32) {
 	copy(oldGroupSlot, thisSet.groupSlot)
 
 	thisSet.hashFunction.Seed = uint64((rand.Uint64() & 0xFFFFFFFFFFFFFFE) + 1) // new seed, make sure seed is not zero
-	thisSet.elementLimit = uint32(float64(newNumGroups) * set3maxAvgGroupLoad)
-	thisSet.resident, thisSet.dead = 0, 0
 	thisSet.groupCtrl = make([]uint64, newNumGroups)
 	thisSet.groupSlot = make([][set3groupSize]T, newNumGroups)
+	thisSet.elementLimit = uint32(float64(newNumGroups) * set3maxAvgGroupLoad)
+	thisSet.resident, thisSet.dead = 0, 0
 	for i := range newNumGroups {
 		thisSet.groupCtrl[i] = set3AllEmpty
 	}
@@ -1092,9 +1122,9 @@ func (thisSet *Set3[T]) rehashToNumGroups(newNumGroups uint32) {
 					grpIdx := getGroupIndex(hash, uint64(newNumGroups))
 					stillSearchingSpace := true
 					for stillSearchingSpace {
-						// optimization: we know it cannot be in thisSet yet so skip
-						// searching for the hashcode and start searching for an empty slot
-						// immediately
+						// optimization: as the element comes from a set, we know it cannot already be
+						// in thisSet, so skip searching for the hashcode and start searching for
+						// an empty slot immediately
 						matches := set3ctlrMatchEmpty(thisSet.groupCtrl[grpIdx])
 
 						if matches != 0 {

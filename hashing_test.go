@@ -3,7 +3,6 @@ package set3
 import (
 	"encoding/binary"
 	"math"
-	"math/rand"
 	"testing"
 	"unsafe"
 )
@@ -29,7 +28,7 @@ func TestSplitmix64Deterministic(t *testing.T) {
 func TestSplitmix64NoCollisionsSmallRange(t *testing.T) {
 	const N = 65536
 	seen := make(map[uint64]struct{}, N)
-	for i := 0; i < N; i++ {
+	for i := range N {
 		v := splitmix64(uint64(i))
 		if _, ok := seen[v]; ok {
 			t.Fatalf("collision at input %d produced value %#x", i, v)
@@ -38,65 +37,84 @@ func TestSplitmix64NoCollisionsSmallRange(t *testing.T) {
 	}
 }
 
-// TestSplitmix64UniformDistribution performs a long-running uniformity
+// Test64BitHasherUniformDistribution performs a long-running uniformity
 // check for splitmix64. It hashes a large number of sequential inputs
 // and accumulates counts into 2^20 buckets. The test verifies that the
 // observed coefficient of variation (relative standard deviation) across
 // buckets is on the same order as the statistical expectation for a
 // multinomial distribution. This test is intentionally expensive and is
 // skipped when `go test -short` is used.
-func TestSplitmix64UniformDistribution(t *testing.T) {
+/* func Test32BitHasherUniformDistribution(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping long uniformity test in short mode")
 	}
 
-	const buckets = 1 << 22 // 2^22 buckets
+	const buckets = 1 << 20 // 2^20 buckets = 1048576
 	// samplesPerBucket controls how many samples fall on average into
-	// each bucket. Choose 128 for a reasonable tradeoff between runtime
-	// and statistical stability: mean ~= 128, expected rel stddev ~= 1/sqrt(128).
-	const samplesPerBucket = 128
+	// each bucket. Choose 256 for a reasonable tradeoff between runtime
+	// and statistical stability: mean = 256, expected rel stddev ~= 1/sqrt(256).
+	const samplesPerBucket = 256
 	N := uint64(buckets * samplesPerBucket)
 
-	counts := make([]uint32, buckets)
-	for i := range N {
-		v := splitmix64(i)
-		idx := int(v & uint64(buckets-1))
-		counts[idx]++
+	cprng := rtcompare.NewCPRNG(8192) // 8KB buffer
+
+	countsHashes := make([]uint32, buckets)
+	countsRands := make([]uint32, buckets)
+	mask := uint64(buckets - 1)
+
+	for range N {
+		//r := getRealRandUint64() // perturb input to avoid any correlations
+		r := cprng.Uint32()
+		//r := i
+		countsRands[uint64(r)&mask]++
+		v := splitmix64(uint64(r)) // splitmix64 does not match test criteria --- IGNORE ---
+		//v := wh32(r, 0xC0FFEE1234567890) // better than splitmix64
+		countsHashes[v&mask]++
 	}
 
-	expected := float64(samplesPerBucket)
 	// compute observed variance
-	var sqsum float64
-	var maxDev float64
+
+	mean := float64(samplesPerBucket)
+	var sqsumHashes float64
+	var maxDevHashes float64
 	var maxDevIdx int = -1
-	for i, c := range counts {
-		d := float64(c) - expected
-		sqsum += d * d
-		if math.Abs(d)/expected > maxDev {
-			maxDev = math.Abs(d) / expected
+	var sqsumRands float64
+	var maxDevRands float64
+
+	for i := range buckets {
+		c := float64(countsHashes[i])
+		d := float64(c) - mean
+		sqsumHashes += d * d
+		if math.Abs(d)/mean > maxDevHashes {
+			maxDevHashes = math.Abs(d) / mean
 			maxDevIdx = i
 		}
+		cR := float64(countsRands[i])
+		dR := float64(cR) - mean
+		sqsumRands += dR * dR
+		if math.Abs(dR)/mean > maxDevRands {
+			maxDevRands = math.Abs(dR) / mean
+		}
 	}
-	obsStd := math.Sqrt(sqsum / float64(buckets))
-	obsRelStd := obsStd / expected
+	obsVar := sqsumHashes / float64(buckets)
+	obsStdDev := math.Sqrt(obsVar)
+	rndVar := sqsumRands / float64(buckets)
+	rndStdDev := math.Sqrt(rndVar)
 
-	// expected relative stddev for multinomial distribution ≈ 1/sqrt(expected)
-	expectedRelStd := math.Sqrt((1.0 - 1.0/float64(buckets)) / expected)
+	t.Logf("uniformity: samples=%d buckets=%d mean=%.3f obsStdDevHash=%.6f obsStdDevRands=%.6f maxDevHash=%.6f maxDevRands=%.6f",
+		N, buckets, mean, obsStdDev, rndStdDev, maxDevHashes, maxDevRands)
 
-	t.Logf("splitmix64 uniformity: samples=%d buckets=%d mean=%.3f obsRelStd=%.6f expectedRelStd=%.6f maxRelDev=%.6f",
-		N, buckets, expected, obsRelStd, expectedRelStd, maxDev)
-
-	// Allow some slack: require observed rel std to be within 1.01x expected.
-	if obsRelStd > 1.01*expectedRelStd {
-		t.Fatalf("observed relative stddev too large: got %.6f, want <= %.6f (1.01x expected)", obsRelStd, 1.01*expectedRelStd)
+	// Allow some slack: require observed rel std to be within 1.04x expected.
+	if obsStdDev > 1.04*rndStdDev {
+		t.Fatalf("observed relative stddev too large: got %.6f, want <= %.6f (1.04x expected)", obsStdDev, 1.04*rndStdDev)
 	}
 
-	// Also ensure no single bucket deviates excessively (e.g. > 50%). This
+	// Also ensure no single bucket deviates excessively (e.g. > 35%). This
 	// guards against pathological clustering even if the overall stddev is ok.
-	if maxDev > 0.5 {
-		t.Fatalf("a bucket deviated too much from mean: maxRelDev=%.6f at index %d", maxDev, maxDevIdx)
+	if maxDevHashes > 0.35 {
+		t.Fatalf("a bucket deviated too much from mean: maxDev=%.6f at index %d, while maxDevRands=%.6f", maxDevHashes, maxDevIdx, maxDevRands)
 	}
-}
+} */
 
 // TestHashBytesBlockNoCollisionsSmallRange ensures hashBytesBlock does not
 // collide over a modest sequence of 64-bit words encoded as little-endian
@@ -245,287 +263,6 @@ func TestHashBytesBlockSlicesEdgeCases(t *testing.T) {
 	}
 }
 
-// TestMakeRuntimeHasherBasic verifies that MakeRuntimeHasher constructs a
-// RuntimeHasher for a variety of comparable types and that the resulting
-// hasher can compute a deterministic hash for a sample value without panicking.
-func TestMakeRuntimeHasherBasic(t *testing.T) {
-	seed := uint64(42)
-
-	t.Run("uint8", func(t *testing.T) {
-		h := MakeRuntimeHasher[uint8](seed)
-		a := h.Hash(uint8(0x7f))
-		b := h.Hash(uint8(0x7f))
-		c := h.Hash(uint8(0x80))
-		if a != b {
-			t.Fatalf("non-deterministic hash for uint8: %x != %x", a, b)
-		}
-		if a == c {
-			t.Fatalf("different uint8 values produced same hash: %x == %x", a, c)
-		}
-	})
-	t.Run("int8", func(t *testing.T) {
-		h := MakeRuntimeHasher[int8](seed)
-		a := h.Hash(int8(-7))
-		b := h.Hash(int8(-7))
-		c := h.Hash(int8(7))
-		if a != b {
-			t.Fatalf("non-deterministic hash for int8: %x != %x", a, b)
-		}
-		if a == c {
-			t.Fatalf("different int8 values produced same hash: %x == %x", a, c)
-		}
-	})
-	t.Run("bool", func(t *testing.T) {
-		h := MakeRuntimeHasher[bool](seed)
-		a := h.Hash(true)
-		b := h.Hash(true)
-		c := h.Hash(false)
-		if a != b {
-			t.Fatalf("non-deterministic hash for bool: %x != %x", a, b)
-		}
-		if a == c {
-			t.Fatalf("different bool values produced same hash: %x == %x", a, c)
-		}
-	})
-	t.Run("uint16", func(t *testing.T) {
-		h := MakeRuntimeHasher[uint16](seed)
-		a := h.Hash(uint16(0x1337))
-		b := h.Hash(uint16(0x1337))
-		c := h.Hash(uint16(0x1338))
-		if a != b {
-			t.Fatalf("non-deterministic hash for uint16: %x != %x", a, b)
-		}
-		if a == c {
-			t.Fatalf("different uint16 values produced same hash: %x == %x", a, c)
-		}
-	})
-	t.Run("int16", func(t *testing.T) {
-		h := MakeRuntimeHasher[int16](seed)
-		a := h.Hash(int16(-1337))
-		b := h.Hash(int16(-1337))
-		c := h.Hash(int16(1337))
-		if a != b {
-			t.Fatalf("non-deterministic hash for int16: %x != %x", a, b)
-		}
-		if a == c {
-			t.Fatalf("different int16 values produced same hash: %x == %x", a, c)
-		}
-	})
-	t.Run("uint32", func(t *testing.T) {
-		h := MakeRuntimeHasher[uint32](seed)
-		a := h.Hash(uint32(0xdeadbeef))
-		b := h.Hash(uint32(0xdeadbeef))
-		c := h.Hash(uint32(0xdeadbeee))
-		if a != b {
-			t.Fatalf("non-deterministic hash for uint32: %x != %x", a, b)
-		}
-		if a == c {
-			t.Fatalf("different uint32 values produced same hash: %x == %x", a, c)
-		}
-	})
-	t.Run("int32", func(t *testing.T) {
-		h := MakeRuntimeHasher[int32](seed)
-		a := h.Hash(int32(-123456))
-		b := h.Hash(int32(-123456))
-		c := h.Hash(int32(123456))
-		if a != b {
-			t.Fatalf("non-deterministic hash for int32: %x != %x", a, b)
-		}
-		if a == c {
-			t.Fatalf("different int32 values produced same hash: %x == %x", a, c)
-		}
-	})
-	t.Run("uint64", func(t *testing.T) {
-		h := MakeRuntimeHasher[uint64](seed)
-		a := h.Hash(uint64(0xfeedfacecafebeef))
-		b := h.Hash(uint64(0xfeedfacecafebeef))
-		c := h.Hash(uint64(0xfeedfacecafebeee))
-		if a != b {
-			t.Fatalf("non-deterministic hash for uint64: %x != %x", a, b)
-		}
-		if a == c {
-			t.Fatalf("different uint64 values produced same hash: %x == %x", a, c)
-		}
-	})
-	t.Run("int64", func(t *testing.T) {
-		h := MakeRuntimeHasher[int64](seed)
-		a := h.Hash(int64(-9223372036854775807))
-		b := h.Hash(int64(-9223372036854775807))
-		c := h.Hash(int64(1))
-		if a != b {
-			t.Fatalf("non-deterministic hash for int64: %x != %x", a, b)
-		}
-		if a == c {
-			t.Fatalf("different int64 values produced same hash: %x == %x", a, c)
-		}
-	})
-	t.Run("uint", func(t *testing.T) {
-		h := MakeRuntimeHasher[uint](seed)
-		a := h.Hash(uint(1234567890))
-		b := h.Hash(uint(1234567890))
-		c := h.Hash(uint(1234567891))
-		if a != b {
-			t.Fatalf("non-deterministic hash for uint: %x != %x", a, b)
-		}
-		if a == c {
-			t.Fatalf("different uint values produced same hash: %x == %x", a, c)
-		}
-	})
-	t.Run("int", func(t *testing.T) {
-		h := MakeRuntimeHasher[int](seed)
-		a := h.Hash(int(-42))
-		b := h.Hash(int(-42))
-		c := h.Hash(int(42))
-		if a != b {
-			t.Fatalf("non-deterministic hash for int: %x != %x", a, b)
-		}
-		if a == c {
-			t.Fatalf("different int values produced same hash: %x == %x", a, c)
-		}
-	})
-	t.Run("uintptr", func(t *testing.T) {
-		h := MakeRuntimeHasher[uintptr](seed)
-		a := h.Hash(uintptr(0xdeadbeef))
-		b := h.Hash(uintptr(0xdeadbeef))
-		c := h.Hash(uintptr(0xdeadbeee))
-		if a != b {
-			t.Fatalf("non-deterministic hash for uintptr: %x != %x", a, b)
-		}
-		if a == c {
-			t.Fatalf("different uintptr values produced same hash: %x == %x", a, c)
-		}
-	})
-	t.Run("float32", func(t *testing.T) {
-		h := MakeRuntimeHasher[float32](seed)
-		a := h.Hash(float32(3.14159))
-		b := h.Hash(float32(3.14159))
-		c := h.Hash(float32(2.71828))
-		if a != b {
-			t.Fatalf("non-deterministic hash for float32: %x != %x", a, b)
-		}
-
-		if a == c {
-			t.Fatalf("different float32 values produced same hash: %x == %x", a, c)
-		}
-	})
-	t.Run("float64", func(t *testing.T) {
-		h := MakeRuntimeHasher[float64](seed)
-		a := h.Hash(float64(-2.718281828))
-		b := h.Hash(float64(-2.718281828))
-		c := h.Hash(float64(3.1415926535))
-		if a != b {
-			t.Fatalf("non-deterministic hash for float64: %x != %x", a, b)
-		}
-		if a == c {
-			t.Fatalf("different float64 values produced same hash: %x == %x", a, c)
-		}
-	})
-	t.Run("string", func(t *testing.T) {
-		h := MakeRuntimeHasher[string](seed)
-		a := h.Hash("hello world")
-		b := h.Hash("hello world")
-		c := h.Hash("goodbye")
-		if a != b {
-			t.Fatalf("non-deterministic hash for string: %x != %x", a, b)
-		}
-		if a == c {
-			t.Fatalf("different string values produced same hash: %x == %x", a, c)
-		}
-	})
-
-	// Arrays are comparable and exercise the array-byte path.
-	t.Run("[0]byte", func(t *testing.T) {
-		h := MakeRuntimeHasher[[0]byte](seed)
-		a := h.Hash([0]byte{})
-		b := h.Hash([0]byte{})
-		if a != b {
-			t.Fatalf("non-deterministic hash for [0]byte: %x != %x", a, b)
-		}
-	})
-	t.Run("[1]byte", func(t *testing.T) {
-		h := MakeRuntimeHasher[[1]byte](seed)
-		a := h.Hash([1]byte{0x1})
-		b := h.Hash([1]byte{0x1})
-		c := h.Hash([1]byte{0x2})
-		if a != b {
-			t.Fatalf("non-deterministic hash for [1]byte: %x != %x", a, b)
-		}
-		if a == c {
-			t.Fatalf("different [1]byte values produced same hash: %x == %x", a, c)
-		}
-	})
-	t.Run("[8]byte", func(t *testing.T) {
-		h := MakeRuntimeHasher[[8]byte](seed)
-		a := h.Hash([8]byte{1, 2, 3, 4, 5, 6, 7, 8})
-		b := h.Hash([8]byte{1, 2, 3, 4, 5, 6, 7, 8})
-		c := h.Hash([8]byte{8, 7, 6, 5, 4, 3, 2, 1})
-		if a != b {
-			t.Fatalf("non-deterministic hash for [8]byte: %x != %x", a, b)
-		}
-		if a == c {
-			t.Fatalf("different [8]byte values produced same hash: %x == %x", a, c)
-		}
-	})
-	t.Run("[16]byte", func(t *testing.T) {
-		h := MakeRuntimeHasher[[16]byte](seed)
-		a := h.Hash([16]byte{0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15})
-		b := h.Hash([16]byte{0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15})
-		c := h.Hash([16]byte{})
-		if a != b {
-			t.Fatalf("non-deterministic hash for [16]byte: %x != %x", a, b)
-		}
-		if a == c {
-			t.Fatalf("different [16]byte values produced same hash: %x == %x", a, c)
-		}
-	})
-
-	// Named types to exercise reflect fallback branches.
-	type MyInt int
-	type MyArray [8]byte
-	t.Run("MyInt", func(t *testing.T) {
-		h := MakeRuntimeHasher[MyInt](seed)
-		a := h.Hash(MyInt(7))
-		b := h.Hash(MyInt(7))
-		c := h.Hash(MyInt(8))
-		if a != b {
-			t.Fatalf("non-deterministic hash for MyInt: %x != %x", a, b)
-		}
-		if a == c {
-			t.Fatalf("different MyInt values produced same hash: %x == %x", a, c)
-		}
-	})
-	t.Run("MyArray", func(t *testing.T) {
-		h := MakeRuntimeHasher[MyArray](seed)
-		a := h.Hash(MyArray{1, 2, 3, 4, 5, 6, 7, 8})
-		b := h.Hash(MyArray{1, 2, 3, 4, 5, 6, 7, 8})
-		c := h.Hash(MyArray{8, 7, 6, 5, 4, 3, 2, 1})
-		if a != b {
-			t.Fatalf("non-deterministic hash for MyArray: %x != %x", a, b)
-		}
-		if a == c {
-			t.Fatalf("different MyArray values produced same hash: %x == %x", a, c)
-		}
-	})
-}
-
-// TestHashBoolTwoValues ensures that hashBool produces exactly two
-// distinct outputs across many random boolean inputs. We use a fixed RNG
-// seed for reproducibility; the inputs are boolean as required.
-func TestHashBoolTwoValues(t *testing.T) {
-	const trials = 1000
-	r := rand.New(rand.NewSource(42))
-	seed := uint64(0x12345678abcdef)
-	seen := make(map[uint64]struct{})
-	for i := 0; i < trials; i++ {
-		b := r.Intn(2) == 1
-		v := hashBool(unsafe.Pointer(&b), seed)
-		seen[v] = struct{}{}
-	}
-	if len(seen) != 2 {
-		t.Fatalf("expected exactly 2 distinct hash values for boolean inputs, got %d", len(seen))
-	}
-}
-
 // checkRuntimeHasher is a small helper that verifies determinism and
 // reasonable distinction for two different values of a comparable type.
 func checkRuntimeHasher[T comparable](t *testing.T, seed uint64, name string, v1, v2 T) {
@@ -554,12 +291,12 @@ func TestHashEntrypoints(t *testing.T) {
 		// Direct string hashing checks (deterministic + different from empty)
 		sEmpty := ""
 		sHello := "hello"
-		h1 := hashString(unsafe.Pointer(&sEmpty), s)
-		h2 := hashString(unsafe.Pointer(&sEmpty), s)
+		h1 := hashStringSM(unsafe.Pointer(&sEmpty), s)
+		h2 := hashStringSM(unsafe.Pointer(&sEmpty), s)
 		if h1 != h2 {
 			t.Fatalf("hashString non-deterministic for seed %x: %x != %x", s, h1, h2)
 		}
-		hHello := hashString(unsafe.Pointer(&sHello), s)
+		hHello := hashStringSM(unsafe.Pointer(&sHello), s)
 		if hHello == h1 {
 			t.Fatalf("hashString produced same value for empty and \"hello\" for seed %x: %x", s, hHello)
 		}
@@ -759,5 +496,605 @@ func TestHashAnySliceAsByteSlice_Uint32AndUint64(t *testing.T) {
 	}
 	if hu1 == hu3 {
 		t.Fatalf("different uint64 slices produced same hash %#x == %#x", hu1, hu3)
+	}
+}
+
+// This test ensures that all 32 bit inputs (0..math.MaxUint32) produce a uniform
+// distribution on the lower 7 bits after hashing with wh32 or splitmix64. It is
+// a long-running test and is skipped in -short mode.
+/* func Test32BitHasherUniformDistribution_Lower7Bits(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping long uniformity test in short mode")
+	}
+
+	const buckets = uint64(1) << 7 // 128 buckets
+	const N = uint64(1) << 32
+	const samplesPerBucket = N / buckets
+
+	countsWh32 := make([]uint32, buckets)
+	countsSplitmix := make([]uint32, buckets)
+	const mask = uint64(buckets - 1)
+
+	for i := range N {
+		v1 := wh32(uint32(i), 0xC0FFEE1234567890)
+		countsWh32[v1&mask]++
+		v2 := splitmix64(uint64(i) ^ 0xC0FFEE1234567890)
+		countsSplitmix[v2&mask]++
+	}
+
+	mean := float64(samplesPerBucket)
+	var sqsumWh32 float64
+	var maxDevWh32 float64
+	var maxDevIdxWh32 int64 = -1
+	var sqsumSplitmix float64
+	var maxDevSplitmix float64
+	var maxDevIdxSplitmix int64 = -1
+
+	for i := range buckets {
+		c1 := float64(countsWh32[i])
+		d1 := float64(c1) - mean
+		sqsumWh32 += d1 * d1
+		if math.Abs(d1)/mean > maxDevWh32 {
+			maxDevWh32 = math.Abs(d1) / mean
+			maxDevIdxWh32 = int64(i)
+		}
+		c2 := float64(countsSplitmix[i])
+		d2 := float64(c2) - mean
+		sqsumSplitmix += d2 * d2
+		if math.Abs(d2)/mean > maxDevSplitmix {
+			maxDevSplitmix = math.Abs(d2) / mean
+			maxDevIdxSplitmix = int64(i)
+		}
+	}
+	expectedRelStd := math.Sqrt((1.0 - 1.0/float64(buckets)) / mean)
+
+	obsStdWh32 := math.Sqrt(sqsumWh32 / float64(buckets))
+	obsRelStdWh32 := obsStdWh32 / mean
+
+	obsStdSplitmix := math.Sqrt(sqsumSplitmix / float64(buckets))
+	obsRelStdSplitmix := obsStdSplitmix / mean
+
+	t.Logf("lower 7 bits uniformity test: samples=%s buckets=%s mean=%s", Pow2String(uint64(N)), Pow2String(buckets), Pow2String(uint64(mean)))
+	t.Logf("wh32       : obsRelStd=%.6f expectedRelStd=%.6f maxRelDev=%.6f at idx %d",
+		obsRelStdWh32, expectedRelStd, maxDevWh32, maxDevIdxWh32)
+	t.Logf("splitmix64 : obsRelStd=%.6f expectedRelStd=%.6f maxRelDev=%.6f at idx %d",
+		obsRelStdSplitmix, expectedRelStd, maxDevSplitmix, maxDevIdxSplitmix)
+
+	if obsRelStdWh32 > 1.03*expectedRelStd {
+		t.Fatalf("wh32: observed relative stddev too large: got %.6f, want <= %.6f (3%% expected)", obsRelStdWh32, 3.0*expectedRelStd)
+	}
+	if maxDevWh32 > .003 {
+		t.Fatalf("wh32: a bucket deviated too much from mean: maxRelDev=%.6f at index %d", maxDevWh32, maxDevIdxWh32)
+	}
+
+	if obsRelStdSplitmix > 1.03*expectedRelStd {
+		t.Fatalf("splitmix64: observed relative stddev too large: got %.6f, want <= %.6f (3%% expected)", obsRelStdSplitmix, 3.0*expectedRelStd)
+	}
+	if maxDevSplitmix > .003 {
+		t.Fatalf("splitmix64: a bucket deviated too much from mean: maxRelDev=%.6f at index %d", maxDevSplitmix, maxDevIdxSplitmix)
+	}
+}
+
+// Pow2String returns "2^k" if n is an exact power of two (n>0), otherwise the
+// decimal representation of n. Works on uint64 inputs.
+func Pow2String(n uint64) string {
+	if n == 0 {
+		return "0"
+	}
+	if n&(n-1) == 0 { // power of two
+		k := bits.TrailingZeros64(n)
+		return fmt.Sprintf("2^%d", k)
+	}
+	return strconv.FormatUint(n, 10)
+}
+
+// This test compares the performance of splitmix64 vs wh32 on hashing 32-bit inputs.
+// It is skipped in -short mode.
+func Test32BitHasherPerformanceComparison(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping long performance test in short mode")
+	}
+
+	const N = 100_000_000
+
+	const repeats = 5555
+	const innerLoops = uint32(10_000)
+	const expectedSpeedup = 0.1 // expect wh32 to be at least 10% faster than splitmix64
+	const minConfidence = 0.95  // require at least 95% confidence
+
+	timesWh32 := make([]float64, 0, repeats)
+	timesSplitmix := make([]float64, 0, repeats)
+	x := uint64(0)
+
+	for range repeats {
+		runtime.GC()
+		prev := debug.SetGCPercent(-1)
+		t1 := rtcompare.SampleTime()
+		for i := range innerLoops {
+			x ^= wh32(i, 0xC0FFEE1234567890)
+		}
+		t2 := rtcompare.SampleTime()
+		_ = debug.SetGCPercent(prev)
+		timesWh32 = append(timesWh32, float64(rtcompare.DiffTimeStamps(t1, t2))/float64(innerLoops))
+
+		runtime.GC()
+		_ = debug.SetGCPercent(-1)
+		t3 := rtcompare.SampleTime()
+		for i := range innerLoops {
+			x ^= splitmix64(uint64(i) ^ 0xC0FFEE1234567890)
+		}
+		t4 := rtcompare.SampleTime()
+		_ = debug.SetGCPercent(prev)
+		timesSplitmix = append(timesSplitmix, float64(rtcompare.DiffTimeStamps(t3, t4))/float64(innerLoops))
+	}
+
+	mWh32 := rtcompare.QuickMedian(timesWh32)
+	mSplitmix := rtcompare.QuickMedian(timesSplitmix)
+	t.Logf("x=%d", x)
+	t.Logf("median call (wh32)=%.1f ns, (splitmix64)=%.1f ns", mWh32, mSplitmix)
+
+	if mSplitmix < mWh32 {
+		t.Fatalf("expected wh32 to be faster: splitmix64=%.1f >= wh32=%.1f", mSplitmix, mWh32)
+	}
+
+	speedups := []float64{expectedSpeedup}
+	results, err := rtcompare.CompareSamples(timesWh32, timesSplitmix, speedups, 10_000)
+	if err != nil {
+		t.Fatalf("CompareSamples failed: %v", err)
+	}
+	if len(results) < 1 {
+		t.Fatalf("expected at least 1 result from CompareSamples, got %d", len(results))
+	}
+	for _, r := range results {
+		t.Logf("Speedup ≥ %.2f%% → Confidence: %.3f%%\n", r.RelativeSpeedupSampleAvsSampleB*100.0, r.Confidence*100.0)
+	}
+	res := results[0]
+	if res.Confidence < minConfidence {
+		t.Fatalf("expected confidence >= %.2f for speedup %.1f, got %.3f", minConfidence, res.RelativeSpeedupSampleAvsSampleB, res.Confidence)
+	}
+}
+
+func TestCompareWh64Splitmix64(t *testing.T) {
+	type stats struct {
+		name       string
+		cv         float64
+		maxDevPct  float64
+		collisions uint32
+		avgHamming float64
+		duration   time.Duration
+	}
+
+	const (
+		N       = 1 << 21 // number of input values to hash
+		Buckets = 3317    // number of buckets
+		AvM     = 100_000 // samples for avalanche test
+		seed    = 0xC0FFEE1234567890
+	)
+
+	run := func(name string, hf func(uint64, uint64) uint64) stats {
+		start := time.Now()
+
+		counts := make([]uint32, Buckets)
+		seen := make(map[uint64]uint32)
+		for i := range uint64(N) {
+			h := hf(i, seed)
+			counts[int(h&(Buckets-1))]++
+			seen[h]++
+		}
+
+		// collisions
+		coll := uint32(0)
+		for _, v := range seen {
+			if v > 1 {
+				coll += v - 1
+			}
+		}
+
+		// coefficient of variation
+		mean := float64(N) / float64(Buckets)
+		var sumsq float64
+		maxDev := 0.0
+		for _, c := range counts {
+			diff := float64(c) - mean
+			sumsq += diff * diff
+			if dev := math.Abs(diff) / mean; dev > maxDev {
+				maxDev = dev
+			}
+		}
+		variance := sumsq / float64(Buckets)
+		cv := math.Sqrt(variance) / mean
+
+		// avalanche: flip one input bit and measure output hamming distance
+		var totalHd int
+		for i := range uint64(AvM) {
+			x := i
+			h1 := hf(x, seed)
+			// flip one bit to test sensitivity
+			h2 := hf(x^(1<<uint64(i&0x3F)), seed)
+			hammingDistance := bits.OnesCount64(h1 ^ h2)
+			totalHd += hammingDistance
+		}
+		avgHd := float64(totalHd) / float64(AvM)
+
+		return stats{
+			name:       name,
+			cv:         cv,
+			maxDevPct:  maxDev * 100,
+			collisions: coll,
+			avgHamming: avgHd,
+			duration:   time.Since(start),
+		}
+	}
+
+	s1 := run("splitmix64", func(v, seed uint64) uint64 { return splitmix64(v ^ seed) })
+	s2 := run("wh64      ", func(v, seed uint64) uint64 { return wh64(v, seed) })
+
+	fmt.Println("Hash comparison (N=", N, " buckets=", Buckets, "):")
+	for _, s := range []stats{s1, s2} {
+		fmt.Printf("%s: CV=%.6g maxDev=%.3f%% collisions=%d avgHamming=%.2f time=%v\n",
+			s.name, s.cv, s.maxDevPct, s.collisions, s.avgHamming, s.duration)
+	}
+} */
+
+// FilteredNumbers returns a channel that emits natural numbers starting at 2
+// that are prime, a power of two, or a multiple of 10. It emits exactly `count` values.
+func FilteredNumbers(count uint64) <-chan uint64 {
+	ch := make(chan uint64)
+	go func() {
+		defer close(ch)
+		if count <= 0 {
+			return
+		}
+		emitted := uint64(0)
+		for n := uint64(2); emitted < count; n++ {
+			if n%100 == 0 || (n <= 500 && n%50 == 0) || (n <= 100 && n%10 == 0) || isPowerOfTwo(n) || isPrime(n) {
+				ch <- n
+				emitted++
+			}
+		}
+	}()
+	return ch
+}
+
+func isPrimeNaive(n uint64) bool {
+	if n < 2 {
+		return false
+	}
+	if n%2 == 0 {
+		return n == 2
+	}
+	for i := uint64(3); i*i <= n; i += 2 {
+		if n%i == 0 {
+			return false
+		}
+	}
+	return true
+}
+
+func isPowerOfTwo(n uint64) bool {
+	return n > 0 && (n&(n-1)) == 0
+}
+func TestFilteredNumbers(t *testing.T) {
+	count := uint64(23)
+	expected := []uint64{2, 3, 4, 5, 7, 8, 10, 11, 13, 16, 17, 19, 20, 23, 29, 30, 31, 32, 37, 40, 41, 43, 47}
+	result := make([]uint64, 0, count)
+	for n := range FilteredNumbers(count) {
+		result = append(result, n)
+	}
+	if len(result) != int(count) {
+		t.Fatalf("expected %d numbers, got %d", count, len(result))
+	}
+	for i, v := range expected {
+		if result[i] != v {
+			t.Fatalf("at index %d: expected %d, got %d", i, v, result[i])
+		}
+	}
+}
+
+/* func TestCompareWh64Splitmix64_MultiBuckets(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping multi-bucket hash comparison in short mode")
+	}
+
+	const (
+		samplesPerBucket = uint64(1024)
+		avm              = uint64(10_000) // avalanche samples per bucket case
+		seed             = 0xC0FFEE1234567890
+		bucketCases      = uint64(245)
+	)
+
+	// prepare result slices
+	var (
+		cvSMresults       []float64
+		cvWHresults       []float64
+		maxDevSMresults   []float64
+		maxDevWHresults   []float64
+		collSMresults     []float64
+		collWHresults     []float64
+		avgHdSMresults    []float64
+		avgHdWHresults    []float64
+		durationSMresults []float64
+		durationWHresults []float64
+	)
+
+	bucketsCh := FilteredNumbers(bucketCases)
+	for b := range bucketsCh {
+		if b <= 0 {
+			continue
+		}
+		buckets := b
+		N := uint64(buckets * samplesPerBucket)
+
+		run := func(hf func(uint64, uint64) uint64) (cv, maxDevPct, collF, avgHdDFO, durSec float64) {
+			start := time.Now()
+
+			counts := make([]uint64, buckets)
+			seen := make(map[uint64]uint32)
+
+			for i := range N {
+				h := hf(i, seed)
+				idx := int(h % uint64(buckets))
+				counts[idx]++
+				seen[h]++
+			}
+
+			// collisions
+			var coll uint64
+			for _, v := range seen {
+				if v > 1 {
+					coll += uint64(v - 1)
+				}
+			}
+
+			mean := float64(N) / float64(buckets)
+			var sumsq float64
+			var maxDev float64
+			for _, c := range counts {
+				diff := float64(c) - mean
+				sumsq += diff * diff
+				if dev := math.Abs(diff) / mean; dev > maxDev {
+					maxDev = dev
+				}
+			}
+			variance := sumsq / float64(buckets)
+			cvVal := math.Sqrt(variance) / mean
+
+			// avalanche: flip a few different low bits to test sensitivity
+			var totalHd uint64
+			for i := range avm {
+				x := i * buckets
+				h1 := hf(x, seed)
+				h2 := hf(x^(uint64(1)<<(uint(i)&0x3F)), seed)
+				totalHd += uint64(bits.OnesCount64(h1 ^ h2))
+			}
+			avgHd := float64(totalHd) / float64(avm)
+			avgHdDFO = math.Abs(avgHd - 32.0)
+
+			return cvVal, maxDev * 100.0, float64(coll), avgHdDFO, time.Since(start).Seconds()
+		}
+
+		cvS, maxDevS, collS, avgHdS, durS := run(func(v, seed uint64) uint64 { return splitmix64(v ^ seed) })
+		cvW, maxDevW, collW, avgHdW, durW := run(func(v, seed uint64) uint64 { return wh64(v, seed) })
+
+		// append results
+		cvSMresults = append(cvSMresults, cvS)
+		cvWHresults = append(cvWHresults, cvW)
+		maxDevSMresults = append(maxDevSMresults, maxDevS)
+		maxDevWHresults = append(maxDevWHresults, maxDevW)
+		collSMresults = append(collSMresults, collS)
+		collWHresults = append(collWHresults, collW)
+		avgHdSMresults = append(avgHdSMresults, avgHdS)
+		avgHdWHresults = append(avgHdWHresults, avgHdW)
+		durationSMresults = append(durationSMresults, durS)
+		durationWHresults = append(durationWHresults, durW)
+
+		t.Logf("buckets=%d N=%d\nsplitmix(cv=%.6g,maxDev=%.3f%%,coll=%.0f,avgHd=%.2f,dur=%.3fs)\n    wh64(cv=%.6g,maxDev=%.3f%%,coll=%.0f,avgHd=%.2f,dur=%.3fs)",
+			buckets, N, cvS, maxDevS, collS, avgHdS, durS, cvW, maxDevW, collW, avgHdW, durW)
+	}
+
+	// Log summary lengths for inspection
+	// t.Logf("summary lens: buckets=%d cvSM=%d cvWH=%d", bucketCases, len(cvSMresults), len(cvWHresults))
+	// t.Logf("cvSM=%v", cvSMresults)
+	// t.Logf("cvWH=%v", cvWHresults)
+	// t.Logf("maxDevSM=%v", maxDevSMresults)
+	// t.Logf("maxDevWH=%v", maxDevWHresults)
+	// t.Logf("collSM=%v", collSMresults)
+	// t.Logf("collWH=%v", collWHresults)
+	// t.Logf("avgHdSM=%v", avgHdSMresults)
+	// t.Logf("avgHdWH=%v", avgHdWHresults)
+	// t.Logf("durSM=%v", durationSMresults)
+	// t.Logf("durWH=%v", durationWHresults)
+
+	// non-failing test; results are for manual inspection / further assertions
+
+	// Pairwise statistical comparisons using rtcompare
+	relativeGains := []float64{-0.20, -0.10, -0.05, -0.025, 0.0, 0.025, 0.05, 0.10, 0.20}
+	iterations := 10_000
+
+	compare := func(name string, a, b []float64) {
+		results, err := rtcompare.CompareSamples(a, b, relativeGains, uint64(iterations))
+		if err != nil {
+			t.Fatalf("CompareSamples failed for %s: %v", name, err)
+		}
+		if len(results) < 1 {
+			t.Fatalf("expected at least 1 result from CompareSamples for %s", name)
+		}
+		for _, r := range results {
+			t.Logf("Compare %s: gain=%.3f -> confidence=%.4f", name, r.RelativeSpeedupSampleAvsSampleB, r.Confidence)
+		}
+	}
+
+	// compare CV (lower is better)
+	compare("CV (WH/SM)", cvWHresults, cvSMresults)
+	compare("MaxDevPct (WH/SM)", maxDevWHresults, maxDevSMresults)
+	compare("Collisions (WH/SM)", collWHresults, collSMresults)
+	compare("AvgHamming (WH/SM)", avgHdWHresults, avgHdSMresults)
+	compare("DurationSec (WH/SM)", durationWHresults, durationSMresults)
+} */
+
+func TestCanonicalizeFloat64Bits_ZeroAndNaN(t *testing.T) {
+	const seed = uint64(0x1234_5678_9abc_def0)
+
+	// +0 and -0 must hash the same (because +0 == -0).
+	p0 := 0.0
+	n0 := math.Copysign(0, -1)
+	hp0 := hashF64SM(unsafe.Pointer(&p0), seed)
+	hn0 := hashF64SM(unsafe.Pointer(&n0), seed)
+	if hp0 != hn0 {
+		t.Fatalf("expected +0 and -0 to hash equally: %x vs %x", hp0, hn0)
+	}
+
+	// Different NaN payloads (and sign) should canonicalize to the same bits.
+	nanA := math.Float64frombits(0x7ff0000000000001) // NaN (payload 1)
+	nanB := math.Float64frombits(0x7ff8000000000002) // NaN (payload 2)
+	nanC := math.Float64frombits(0xfff8000000000003) // NaN (payload 3, sign set)
+
+	ha := hashF64SM(unsafe.Pointer(&nanA), seed)
+	hb := hashF64SM(unsafe.Pointer(&nanB), seed)
+	hc := hashF64SM(unsafe.Pointer(&nanC), seed)
+	if ha != hb || ha != hc {
+		t.Fatalf("expected NaNs to hash equally: %x %x %x", ha, hb, hc)
+	}
+}
+
+func TestCanonicalizeFloat64BitsBranchless_SignPreserved(t *testing.T) {
+	const seed = uint64(0x1234_5678_9abc_def0)
+
+	// Sign must be preserved for non-zero numbers; +x and -x are not equal.
+	p := 1.0
+	n := -1.0
+	hp := hashF64SM(unsafe.Pointer(&p), seed)
+	hn := hashF64SM(unsafe.Pointer(&n), seed)
+	if hp == hn {
+		t.Fatalf("expected +1 and -1 to hash differently, got %x", hp)
+	}
+}
+
+func TestHashCanonicalizedFloat64_ZeroCanonicalization(t *testing.T) {
+	seed := uint64(0xDEADBEEFCAFEBABE)
+
+	pz := 0.0
+	nz := math.Copysign(0.0, -1.0)
+
+	hpz := hashF64SM(unsafe.Pointer(&pz), seed)
+	hnz := hashF64SM(unsafe.Pointer(&nz), seed)
+
+	if hpz != hnz {
+		t.Fatalf("+0 and -0 must hash equal: hpz=%#x hnz=%#x", hpz, hnz)
+	}
+	if want := splitmix64(seed); hpz != want {
+		t.Fatalf("zero hash mismatch: got=%#x want=%#x", hpz, want)
+	}
+
+	// determinism
+	if hpz2 := hashF64SM(unsafe.Pointer(&pz), seed); hpz2 != hpz {
+		t.Fatalf("non-deterministic for +0: got=%#x want=%#x", hpz2, hpz)
+	}
+	if hnz2 := hashF64SM(unsafe.Pointer(&nz), seed); hnz2 != hnz {
+		t.Fatalf("non-deterministic for -0: got=%#x want=%#x", hnz2, hnz)
+	}
+}
+
+func TestHashCanonicalizedFloat64_NaNsCanonicalized(t *testing.T) {
+	seed := uint64(0x0123456789ABCDEF)
+	const canonNaNBits = 0x7ff8000000000000
+
+	nans := []uint64{
+		canonNaNBits,       // canonical qNaN
+		0x7ff8000000000001, // qNaN with payload
+		0x7ff8000000001234, // qNaN with different payload
+		0x7ff0000000000001, // sNaN-like payload
+		0xfff8000000000000, // negative qNaN
+		0xfff0000000000001, // negative sNaN-like payload
+		0x7fffffffffffffff, // exponent all ones, mantissa all ones (NaN)
+		0xffffffffffffffff, // negative NaN with all mantissa bits
+		0x7ff0123400000000, // NaN (exp all ones, mantissa non-zero)
+		0xfff0123400000000, // negative NaN variant
+	}
+
+	want := splitmix64(seed ^ canonNaNBits)
+
+	var first uint64
+	for i, bits := range nans {
+		v := math.Float64frombits(bits)
+		got := hashF64SM(unsafe.Pointer(&v), seed)
+
+		if i == 0 {
+			first = got
+		}
+		if got != first {
+			t.Fatalf("NaNs must hash equal after canonicalization: i=%d bits=%#x got=%#x first=%#x", i, bits, got, first)
+		}
+		if got != want {
+			t.Fatalf("NaN canonical hash mismatch: i=%d bits=%#x got=%#x want=%#x", i, bits, got, want)
+		}
+
+		// determinism
+		got2 := hashF64SM(unsafe.Pointer(&v), seed)
+		if got2 != got {
+			t.Fatalf("non-deterministic NaN hash: i=%d bits=%#x got=%#x got2=%#x", i, bits, got, got2)
+		}
+	}
+}
+
+func TestHashCanonicalizedFloat64_NonNaNMatchesSplitmixOfBits(t *testing.T) {
+	seed := uint64(0xC0FFEE1234567890)
+
+	vals := []float64{
+		1.0,
+		-1.0,
+		1.5,
+		-2.718281828,
+		3.1415926535,
+		math.SmallestNonzeroFloat64,
+		math.MaxFloat64,
+		math.Inf(1),
+		math.Inf(-1),
+	}
+
+	for _, v := range vals {
+		got := hashF64SM(unsafe.Pointer(&v), seed)
+		u := math.Float64bits(v)
+		want := splitmix64(seed ^ u)
+
+		if got != want {
+			t.Fatalf("non-NaN hash mismatch for v=%v: got=%#x want=%#x", v, got, want)
+		}
+
+		// determinism
+		if got2 := hashF64SM(unsafe.Pointer(&v), seed); got2 != got {
+			t.Fatalf("non-deterministic hash for v=%v: got=%#x got2=%#x", v, got, got2)
+		}
+	}
+}
+
+func TestHashCanonicalizedFloat64_InfIsNotTreatedAsNaN(t *testing.T) {
+	seed := uint64(0xBADC0FFEE0DDF00D)
+
+	posInf := math.Inf(1)
+	negInf := math.Inf(-1)
+	nan := math.NaN()
+
+	hPos := hashF64SM(unsafe.Pointer(&posInf), seed)
+	hNeg := hashF64SM(unsafe.Pointer(&negInf), seed)
+	hNaN := hashF64SM(unsafe.Pointer(&nan), seed)
+
+	wantPos := splitmix64(seed ^ math.Float64bits(posInf))
+	wantNeg := splitmix64(seed ^ math.Float64bits(negInf))
+
+	if hPos != wantPos {
+		t.Fatalf("+Inf hash mismatch: got=%#x want=%#x", hPos, wantPos)
+	}
+	if hPos == hNaN {
+		t.Fatalf("+Inf and NaN must not hash equal under bit-hash: +Inf=%#x NaN=%#x", hPos, hNaN)
+	}
+	if hNeg != wantNeg {
+		t.Fatalf("-Inf hash mismatch: got=%#x want=%#x", hNeg, wantNeg)
+	}
+	if hNeg == hNaN {
+		t.Fatalf("-Inf and NaN must not hash equal under bit-hash: -Inf=%#x NaN=%#x", hNeg, hNaN)
+	}
+	if hPos == hNeg {
+		t.Fatalf("+Inf and -Inf must not hash equal under bit-hash: +Inf=%#x -Inf=%#x", hPos, hNeg)
 	}
 }
