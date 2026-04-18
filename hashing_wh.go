@@ -67,7 +67,7 @@ func wh32detExtMul(val uint64, seed uint64) uint64 {
 
 // wh32det is a deterministic variant of wh32 that does not use random keys.
 func wh32det(val uint32, seed uint64) uint64 {
-	a := 0x0000_0001_0000_0001 * uint64(val)
+	a := goldenRatio32 * uint64(val)
 	b := a ^ p1
 	c := a ^ seed
 	d := mix(b, c)
