@@ -55,6 +55,17 @@ func wh32(val uint32, seed uint64) uint64 {
 }
 
 // wh32det is a deterministic variant of wh32 that does not use random keys.
+// The widening multiplication must be done BEFORE this function is called, it is for benchmarking purposes only.
+func wh32detExtMul(val uint64, seed uint64) uint64 {
+	a := val
+	b := a ^ p1
+	c := a ^ seed
+	d := mix(b, c)
+	e := mix(m5^4, d) // m5^4 is from wyhash, but its a constant here, so just keep it
+	return e
+}
+
+// wh32det is a deterministic variant of wh32 that does not use random keys.
 func wh32det(val uint32, seed uint64) uint64 {
 	a := 0x0000_0001_0000_0001 * uint64(val)
 	b := a ^ p1

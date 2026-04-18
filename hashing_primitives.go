@@ -191,6 +191,25 @@ func hashF32SM(p unsafe.Pointer, seed uint64) uint64 {
 	return splitmix64(seed ^ v)
 }
 
+// hashF32WHdet hashes a float32 by canonicalizing zero and NaN and then
+// hashing the IEEE-754 bit representation.
+func hashF32WHdet(p unsafe.Pointer, seed uint64) uint64 {
+	f := *(*float32)(p)
+	var bits uint32
+	if f == 0 {
+		bits = 0
+	} else if math.IsNaN(float64(f)) {
+		// even though we can never "find" NaN in a set (as NaN != NaN),
+		// we still want all NaN values to hash to the same value
+		// to avoid unnecessary collisions with other values
+		bits = 0x7fc00000 // canonical representation of NaN for float32
+	} else {
+		bits = math.Float32bits(f)
+	}
+	v := wh32det(bits, seed)
+	return v
+}
+
 // hashStringMH uses the hasher from  stdlib `hash/maphash` to hash
 // float64.
 func hashF32MH(p unsafe.Pointer, seed uint64) uint64 {
