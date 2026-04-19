@@ -50,7 +50,7 @@ func (thisCfg *searchDataDriver) nextSearchValue() uint64 {
 	x := uint64(float64(math.MaxUint64) * thisCfg.hitRatio)
 	rndVal := thisCfg.rng.Uint64()
 	upper32 := uint32(rndVal >> 32)
-	idx := upper32 % uint32(len(thisCfg.setValues))
+	idx := upper32 % uint32(uint64(len(thisCfg.setValues))) //nolint:gosec
 	tableVal := thisCfg.setValues[idx]
 	var result uint64
 	if thisCfg.rng.Uint64() < x {
@@ -479,7 +479,7 @@ func TestSet3Fill(t *testing.T) {
 			runtime.ReadMemStats(&startMem)
 			startTime := time.Now().UnixNano()
 			for j := 0; j < cfg.itersPerRoundFill; j++ {
-				set := EmptyWithCapacity[uint64](uint32(cfg.initSetSize))
+				set := EmptyWithCapacity[uint64](uint32(uint64(cfg.initSetSize))) //nolint:gosec
 				for k := 0; k < len(sdd.setValues); k++ {
 					set.Add(sdd.setValues[k])
 				}
@@ -490,7 +490,7 @@ func TestSet3Fill(t *testing.T) {
 			runtime.ReadMemStats(&endMem)
 			// make sure everything is there as expected
 			for j := 0; j < cfg.itersPerRoundFill; j++ {
-				if sets[j].Size() != uint32(cfg.finalSetSize) {
+				if sets[j].Size() != uint32(uint64(cfg.finalSetSize)) { //nolint:gosec
 					t.Fail()
 				}
 			}
@@ -518,7 +518,7 @@ func TestNativeMapFill(t *testing.T) {
 			runtime.ReadMemStats(&startMem)
 			startTime := time.Now().UnixNano()
 			for j := 0; j < cfg.itersPerRoundFill; j++ {
-				set := emptyNativeWithCapacity[uint64](uint32(cfg.initSetSize))
+				set := emptyNativeWithCapacity[uint64](uint32(uint64(cfg.initSetSize))) //nolint:gosec
 				for k := 0; k < len(sdd.setValues); k++ {
 					set.add(sdd.setValues[k])
 				}
@@ -529,7 +529,7 @@ func TestNativeMapFill(t *testing.T) {
 			runtime.ReadMemStats(&endMem)
 			// make sure everything is there as expected
 			for j := 0; j < cfg.itersPerRoundFill; j++ {
-				if sets[j].count() != uint32(cfg.finalSetSize) {
+				if sets[j].count() != uint32(uint64(cfg.finalSetSize)) { //nolint:gosec
 					t.Fail()
 				}
 			}
@@ -643,7 +643,7 @@ func TestNativeMapFind(t *testing.T) {
 			var startMem, endMem runtime.MemStats
 			runtime.GC()
 			runtime.ReadMemStats(&startMem)
-			currentSet := emptyNativeWithCapacity[uint64](uint32(cfg.finalSetSize))
+			currentSet := emptyNativeWithCapacity[uint64](uint32(uint64(cfg.finalSetSize))) //nolint:gosec
 			for j := 0; j < len(currentSdd.setValues); j++ {
 				currentSet.add(currentSdd.setValues[j])
 			}
