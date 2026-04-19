@@ -1,3 +1,4 @@
+// Package main provides primality testing functionality.
 package main
 
 import (
@@ -7,11 +8,6 @@ import (
 	"os"
 	"strconv"
 )
-
-type providerRequest struct {
-	limit uint64
-	resp  chan uint64
-}
 
 // - first 200 primes are embedded at compile-time in `first200Primes`.
 // - `testCandidates(limit)` returns a channel that yields all embedded primes
