@@ -24,7 +24,7 @@ type RuntimeHasher[K comparable] struct {
 // and seed. The key pointer is wrapped with [Noescape] to avoid heap
 // allocation during hashing.
 func (h *RuntimeHasher[K]) Hash(k K) uint64 {
-	p := Noescape(unsafe.Pointer(&k))
+	p := Noescape(unsafe.Pointer(&k)) //nolint:gosec
 	return h.fn(p, h.Seed)
 }
 
@@ -73,29 +73,30 @@ func MakeRuntimeHasher[K comparable](seed uint64) RuntimeHasher[K] {
 		h.fn = HashByteSlice
 	case []int, []uint, []int16, []uint16, []int32, []uint32,
 		[]int64, []uint64:
-		//h.fn = hashAnySliceAsByteSlice[K]
+		// h.fn = hashAnySliceAsByteSlice[K]
 		panic("slices of non-byte int/uint types were not 'comparable' at the time of writing this code, so no tests were possible")
 	default:
 		// fall back to reflect-based inspection for more cases
 		t := reflect.TypeOf(zero)
-		if t.Kind() == reflect.Slice && t.Elem().Kind() == reflect.Uint8 {
+		switch {
+		case t.Kind() == reflect.Slice && t.Elem().Kind() == reflect.Uint8:
 			// subtle difference: []byte (but with different declared element type) -> use slice handler
 			h.fn = HashByteSlice
-		} else if CanUseUnsafeRawByteBlockHasherType(t).Eligible {
+		case CanUseUnsafeRawByteBlockHasherType(t).Eligible:
 			// Fast path for layouts that are safe for raw byte-block hashing
 			// according to Go equality semantics.
 			h.fn = HashAsByteArray[K]
-		} else {
+		default:
 			// generic approach: use internal hash function from SwissMapType
 			h.fn = HashFallbackMaphash[K]
 
 			// alternative api package internal/abi is not allowed:
-			//var m map[K]struct{}
-			//mTyp := abi.TypeOf(m)
-			//maphashhasher := (*abi.SwissMapType)(unsafe.Pointer(mTyp)).Hasher
-			//h.fn = func(p unsafe.Pointer, seed uint64) uint64 {
-			//	return uint64(maphashhasher(p, uintptr(seed)))
-			//}
+			// var m map[K]struct{}
+			// mTyp := abi.TypeOf(m)
+			// maphashhasher := (*abi.SwissMapType)(unsafe.Pointer(mTyp)).Hasher
+			// h.fn = func(p unsafe.Pointer, seed uint64) uint64 {
+			// 	return uint64(maphashhasher(p, uintptr(seed)))
+			// }
 		}
 	}
 	return h
@@ -115,5 +116,5 @@ func MakeRuntimeHasher[K comparable](seed uint64) RuntimeHasher[K] {
 //go:nocheckptr
 func Noescape(p unsafe.Pointer) unsafe.Pointer {
 	x := uintptr(p)
-	return unsafe.Pointer(x ^ 0)
+	return unsafe.Pointer(x ^ 0) //nolint:gosec
 }
