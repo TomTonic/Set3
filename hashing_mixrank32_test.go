@@ -83,10 +83,10 @@ const (
 	weightHighRelStd    = 0.02
 
 	// group-count selection knobs for Set3 mapping analysis.
-	groupCountRehashPrefix = 29
+	groupCountRehashPrefix = 33
 	groupCountFilteredHint = 300
-	groupCountFilteredMax  = 10_083
-	groupCountRankCap      = 48
+	groupCountFilteredMax  = 10_083 // 65536 values do not need more than this number of buckets
+	groupCountRankCap      = 72
 
 	// Keep expected bucket occupancy >= sampleCount/groupCountSampleOccFloor
 	// in sampling-based group mapping metrics.

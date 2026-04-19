@@ -34,8 +34,8 @@ const pie7_24 = pie7_64>>40 | 1    // (pi+e)/7 * 2^24 & make sure the number is 
 const pie7_16 = pie7_64>>48 | 1    // (pi+e)/7 * 2^16 & make sure the number is odd
 const pie7_08 = pie7_64>>56 | 1    // (pi+e)/7 * 2^8 & make sure the number is odd
 
-const spread16to64 = pie7_48       // tests show that a multiplication with pie7_48 yields in the best distribution of 16-bit hashvalues to groups when using SplitMix64. See TestHashingCompare16BitConstantsForSplitMixGroupCountBuckets
-const spread32to64 = goldenRatio32 // tests show that a multiplication with goldenRatio32 yields in the best distribution of 32-bit hashvalues to groups when using SplitMix64. See TestHashingCompare32BitConstantsForSplitMixGroupCountBuckets
+const spread16to64 = 0x001001001001 // tests show that a multiplication with pie7_48 yields in the best distribution of 16-bit hashvalues to groups when using SplitMix64. See TestHashingCompare16BitConstantsForSplitMixGroupCountBuckets
+const spread32to64 = goldenRatio32  // tests show that a multiplication with goldenRatio32 yields in the best distribution of 32-bit hashvalues to groups when using SplitMix64. See TestHashingCompare32BitConstantsForSplitMixGroupCountBuckets
 
 // hashBool always returns one of two fixed hash values for false and true.
 // This is not a good general hash function, but it is well suited the
@@ -77,9 +77,7 @@ func hashI08MH(p unsafe.Pointer, seed uint64) uint64 {
 // hashI16SM hashes a uint16 value by promoting to uint64 and applying splitmix64.
 func hashI16SM(p unsafe.Pointer, seed uint64) uint64 {
 	u := *(*uint16)(p)
-	//v := 0x0001000100010001 * uint64(u) // broadcast to all 8 bytes
-	//v := 0x000100010000FFD1 * uint64(u) // better dispersion for small uint16 values: multiply with the largest prime p such that p*65535 < 2^64
-	v := spread16to64 * uint64(u) // better dispersion for uint16 values: multiply with Knuth's golden ratio constant for 48 bits
+	v := 0x0001000100010001 * uint64(u) // broadcast to all 8 bytes
 	return splitmix64(seed ^ v)
 }
 
@@ -117,7 +115,7 @@ func hashI32WH(p unsafe.Pointer, seed uint64) uint64 {
 // hashI32WHdet hashes a uint32 using the deterministic variant of wh32.
 func hashI32WHdet(p unsafe.Pointer, seed uint64) uint64 {
 	u := *(*uint32)(p)
-	return wh32det(u, seed)
+	return wh32detGR(u, seed)
 }
 
 // hashStringMH uses the hasher from  stdlib `hash/maphash` to hash
@@ -185,9 +183,7 @@ func hashF32SM(p unsafe.Pointer, seed uint64) uint64 {
 	} else {
 		bits = math.Float32bits(f)
 	}
-	//v := 0x0000000100000001 * uint64(u) // broadcast to all 8 bytes
-	//v := 0x00000000FFFFFFFB * uint64(bits) // better dispersion for small uint32 values: multiply with the largest prime p such that p*4294967295 < 2^64
-	v := spread32to64 * uint64(bits) // better dispersion for 32-bit values
+	v := 0x0000000100000001 * uint64(bits) // broadcast to all 8 bytes, replication performed best in our benchmarks for the full float32 range
 	return splitmix64(seed ^ v)
 }
 
@@ -206,7 +202,7 @@ func hashF32WHdet(p unsafe.Pointer, seed uint64) uint64 {
 	} else {
 		bits = math.Float32bits(f)
 	}
-	v := wh32det(bits, seed)
+	v := wh32detGR(bits, seed)
 	return v
 }
 
@@ -247,6 +243,24 @@ func hashF64SM(p unsafe.Pointer, seed uint64) uint64 {
 		bits = math.Float64bits(f)
 	}
 	return splitmix64(seed ^ bits)
+}
+
+// hashF64WHdet hashes a float64 by canonicalizing zero and NaN and then
+// hashing the IEEE-754 bit representation.
+func hashF64WHdet(p unsafe.Pointer, seed uint64) uint64 {
+	f := *(*float64)(p)
+	var bits uint64
+	if f == 0 {
+		bits = 0
+	} else if math.IsNaN(f) {
+		// even though we can never "find" NaN in a set (as NaN != NaN),
+		// we still want all NaN values to hash to the same value
+		// to avoid unnecessary collisions with other values
+		bits = 0x7ff8000000000000 // canonical representation of NaN for float64
+	} else {
+		bits = math.Float64bits(f)
+	}
+	return wh64det(bits, seed)
 }
 
 // hashStringMH uses the hasher from  stdlib `hash/maphash` to hash

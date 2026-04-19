@@ -69,7 +69,7 @@ func MakeRuntimeHasher[K comparable](seed uint64) RuntimeHasher[K] {
 	case float32:
 		h.fn = hashF32SM
 	case float64:
-		h.fn = hashF64SM
+		h.fn = hashF64WHdet
 	case string:
 		h.fn = hashStringSM
 	case []byte, []int8:
