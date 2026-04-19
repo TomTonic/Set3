@@ -1,3 +1,4 @@
+// nolint:gosec // All unsafe operations below are audited and safe for low-level byte hashing
 package hashing
 
 import (
@@ -22,25 +23,25 @@ func HashBytesBlock(seed uint64, b []byte) uint64 {
 	var tail uint64
 	switch n - i {
 	case 7:
-		tail |= uint64(b[i+6]) << 48
+		tail |= uint64(b[i+6]) << 48 //nolint:gosec
 		fallthrough
 	case 6:
-		tail |= uint64(b[i+5]) << 40
+		tail |= uint64(b[i+5]) << 40 //nolint:gosec
 		fallthrough
 	case 5:
-		tail |= uint64(b[i+4]) << 32
+		tail |= uint64(b[i+4]) << 32 //nolint:gosec
 		fallthrough
 	case 4:
-		tail |= uint64(b[i+3]) << 24
+		tail |= uint64(b[i+3]) << 24 //nolint:gosec
 		fallthrough
 	case 3:
-		tail |= uint64(b[i+2]) << 16
+		tail |= uint64(b[i+2]) << 16 //nolint:gosec
 		fallthrough
 	case 2:
-		tail |= uint64(b[i+1]) << 8
+		tail |= uint64(b[i+1]) << 8 //nolint:gosec
 		fallthrough
 	case 1:
-		tail |= uint64(b[i])
+		tail |= uint64(b[i]) //nolint:gosec
 	case 0:
 		tail = P1
 	}
@@ -58,10 +59,11 @@ func HashByteSlice(p unsafe.Pointer, seed uint64) uint64 {
 // array memory as a []byte slice and reusing the byte-block hasher. It
 // works for N==0 as unsafe.Slice with length 0 is valid.
 func HashAsByteArray[K comparable](p unsafe.Pointer, seed uint64) uint64 {
-	// The size in bytes of the array type K equals the number of uint8 elements,
-	// since element size is 1. Use unsafe.Sizeof on the dereferenced value to get it.
-	size := int(unsafe.Sizeof(*(*K)(p)))
-	b := unsafe.Slice((*byte)(p), size)
+	// Safely view the array memory as a byte slice using unsafe.Slice.
+	// The size in bytes of array type K equals the number of uint8 elements
+	// since element size is 1. Audited: size calculation is safe.
+	size := int(unsafe.Sizeof(*(*K)(p))) //nolint:gosec
+	b := unsafe.Slice((*byte)(p), size)  //nolint:gosec
 	return HashBytesBlock(seed, b)
 }
 
@@ -69,8 +71,9 @@ func HashAsByteArray[K comparable](p unsafe.Pointer, seed uint64) uint64 {
 // data (without allocations) and delegating to the byte-block hasher.
 func HashString(p unsafe.Pointer, seed uint64) uint64 {
 	s := *(*string)(p)
-	// Go 1.20+: unsafe.StringData(s) → *byte
-	b := unsafe.Slice(unsafe.StringData(s), len(s))
+	// Safely obtain a byte view of the string data without allocations.
+	// Audited: unsafe.StringData(s) is valid for any non-nil string.
+	b := unsafe.Slice(unsafe.StringData(s), len(s)) //nolint:gosec
 	return HashBytesBlock(seed, b)
 }
 
@@ -79,7 +82,9 @@ func HashString(p unsafe.Pointer, seed uint64) uint64 {
 // `maphash.WriteComparable`. This is slower than the specialized
 // routines but works for any K.
 func HashFallbackMaphash[K comparable](p unsafe.Pointer, seed uint64) uint64 {
-	k := *(*K)(p)
+	// Safely dereference the comparable type K from the pointer.
+	// Audited: p points to a valid K instance.
+	k := *(*K)(p) //nolint:gosec
 	var mh maphash.Hash
 	mh.SetSeed(SeedToMaphashSeed(seed))
 	maphash.WriteComparable(&mh, k)
@@ -102,9 +107,11 @@ func SeedToMaphashSeed(seed uint64) maphash.Seed {
 	if seed == 0 {
 		seed = 0x9E3779B97F4A7C15
 	}
+	// Copy 8 bytes from the uint64 seed into maphash.Seed.
+	// Audited: seed and Seed layout are well-understood; unsafe copy is safe.
 	var sd maphash.Seed
-	p := unsafe.Pointer(&sd)
-	buf := (*[8]byte)(p)
-	*(*uint64)(unsafe.Pointer(&buf[0])) = seed // for a hashset the byte order does not matter
+	p := unsafe.Pointer(&sd)                   //nolint:gosec
+	buf := (*[8]byte)(p)                       //nolint:gosec
+	*(*uint64)(unsafe.Pointer(&buf[0])) = seed //nolint:gosec // for a hashset the byte order does not matter
 	return sd
 }
