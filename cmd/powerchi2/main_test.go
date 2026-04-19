@@ -185,10 +185,8 @@ func TestCheckProbs(t *testing.T) {
 				if !strings.Contains(err.Error(), tc.argName) {
 					t.Fatalf("error %q does not contain argument name %q", err.Error(), tc.argName)
 				}
-			} else {
-				if err != nil {
-					t.Fatalf("unexpected error: %v", err)
-				}
+			} else if err != nil {
+				t.Fatalf("unexpected error: %v", err)
 			}
 		})
 	}
