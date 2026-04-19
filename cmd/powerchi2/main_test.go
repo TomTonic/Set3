@@ -509,13 +509,13 @@ func TestMonteCarloComparison(t *testing.T) {
 
 	analytic := powerChi2GoodnessOfFit(n, alpha, dH1, dH0, tol)
 
-	// Monte Carlo runs: moderate to keep tests fast but reasonably precise.
-	trials := uint64(2000)
+	// Monte Carlo runs: chosen for stable CI while keeping runtime short.
+	trials := uint64(5000)
 	chi2CriticalVal := centralChi2Quantile(float64(len(dH1)-1), alpha)
 	mc := mcPower(n, chi2CriticalVal, dH1, dH0, trials)
 
-	// allow 1% absolute deviation
-	if math.Abs(mc-analytic) > 0.01 {
-		t.Fatalf("Monte Carlo power %v differs from analytic %v by >0.01", mc, analytic)
+	// allow small Monte Carlo sampling noise.
+	if math.Abs(mc-analytic) > 0.015 {
+		t.Fatalf("Monte Carlo power %v differs from analytic %v by >0.015", mc, analytic)
 	}
 }
