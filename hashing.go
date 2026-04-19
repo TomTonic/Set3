@@ -71,7 +71,7 @@ func MakeRuntimeHasher[K comparable](seed uint64) RuntimeHasher[K] {
 	case float64:
 		h.fn = hashF64WHdet
 	case string:
-		h.fn = hashStringSM
+		h.fn = hashString
 	case []byte, []int8:
 		// []byte and []uint8 are identical types; both use slice handler
 		h.fn = hashByteSlice
@@ -114,7 +114,7 @@ func hashBytesBlock(seed uint64, b []byte) uint64 {
 	i, n := 0, len(b)
 	for i+8 <= n {
 		v := binary.NativeEndian.Uint64(b[i:])
-		h = splitmix64(h ^ v)
+		h = wh64det(v, h)
 		i += 8
 	}
 	// Tail 0..7 Bytes
@@ -143,7 +143,7 @@ func hashBytesBlock(seed uint64, b []byte) uint64 {
 	case 0:
 		tail = p1
 	}
-	return splitmix64(h ^ tail ^ uint64(n)*p2)
+	return wh64det(tail^uint64(n)*p2, h)
 }
 
 // hashByteSlice hashes a []uint8 (alias []byte) by delegating to the
@@ -185,9 +185,9 @@ func hashAsByteArray[K comparable](p unsafe.Pointer, seed uint64) uint64 {
 	return hashBytesBlock(seed, b)
 }
 
-// hashStringSM hashes a Go string by obtaining a byte view of the string
+// hashString hashes a Go string by obtaining a byte view of the string
 // data (without allocations) and delegating to the byte-block hasher.
-func hashStringSM(p unsafe.Pointer, seed uint64) uint64 {
+func hashString(p unsafe.Pointer, seed uint64) uint64 {
 	s := *(*string)(p)
 	// Go 1.20+: unsafe.StringData(s) → *byte
 	b := unsafe.Slice(unsafe.StringData(s), len(s))

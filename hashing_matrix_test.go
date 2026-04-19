@@ -339,7 +339,7 @@ var hashFunctionsForFloat64 = hashFunctionsForType{
 
 var hashFunctionsForString = hashFunctionsForType{
 	typesDescr:      "str",
-	implementations: []hashfunction{hashStringSM, hashStringWH, hashStringMH},
+	implementations: []hashfunction{hashString, hashStringWH, hashStringMH},
 	samples: func(limit uint64) <-chan any {
 		ch := make(chan any, 8192)
 		go func() {

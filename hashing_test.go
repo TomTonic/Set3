@@ -291,12 +291,12 @@ func TestHashEntrypoints(t *testing.T) {
 		// Direct string hashing checks (deterministic + different from empty)
 		sEmpty := ""
 		sHello := "hello"
-		h1 := hashStringSM(unsafe.Pointer(&sEmpty), s)
-		h2 := hashStringSM(unsafe.Pointer(&sEmpty), s)
+		h1 := hashString(unsafe.Pointer(&sEmpty), s)
+		h2 := hashString(unsafe.Pointer(&sEmpty), s)
 		if h1 != h2 {
 			t.Fatalf("hashString non-deterministic for seed %x: %x != %x", s, h1, h2)
 		}
-		hHello := hashStringSM(unsafe.Pointer(&sHello), s)
+		hHello := hashString(unsafe.Pointer(&sHello), s)
 		if hHello == h1 {
 			t.Fatalf("hashString produced same value for empty and \"hello\" for seed %x: %x", s, hHello)
 		}
