@@ -73,14 +73,50 @@ func HashAsByteArray[K comparable](p unsafe.Pointer, seed uint64) uint64 {
 	return HashBytesBlock(seed, b)
 }
 
-// HashString hashes a Go string by obtaining a byte view of the string
-// data (without allocations) and delegating to the byte-block hasher.
+// HashString hashes a Go string by reading its bytes directly through
+// pointer arithmetic, avoiding slice creation and the function-call
+// overhead of HashBytesBlock.
 func HashString(p unsafe.Pointer, seed uint64) uint64 {
 	s := *(*string)(p)
-	// Safely obtain a byte view of the string data without allocations.
-	// Audited: unsafe.StringData(s) is valid for any non-nil string.
-	b := unsafe.Slice(unsafe.StringData(s), len(s)) //nolint:gosec
-	return HashBytesBlock(seed, b)
+	n := len(s)
+	h := seed ^ P0
+	if n == 0 {
+		return WH64Det(P1^uint64(n)*P2, h)
+	}
+	dp := unsafe.Pointer(unsafe.StringData(s)) //nolint:gosec
+	i := 0
+	for i+8 <= n {
+		v := *(*uint64)(unsafe.Add(dp, i)) //nolint:gosec
+		h = WH64Det(v, h)
+		i += 8
+	}
+	// Tail 0..7 bytes – same encoding as HashBytesBlock
+	var tail uint64
+	switch n - i {
+	case 7:
+		tail |= uint64(*(*byte)(unsafe.Add(dp, i+6))) << 48 //nolint:gosec
+		fallthrough
+	case 6:
+		tail |= uint64(*(*byte)(unsafe.Add(dp, i+5))) << 40 //nolint:gosec
+		fallthrough
+	case 5:
+		tail |= uint64(*(*byte)(unsafe.Add(dp, i+4))) << 32 //nolint:gosec
+		fallthrough
+	case 4:
+		tail |= uint64(*(*byte)(unsafe.Add(dp, i+3))) << 24 //nolint:gosec
+		fallthrough
+	case 3:
+		tail |= uint64(*(*byte)(unsafe.Add(dp, i+2))) << 16 //nolint:gosec
+		fallthrough
+	case 2:
+		tail |= uint64(*(*byte)(unsafe.Add(dp, i+1))) << 8 //nolint:gosec
+		fallthrough
+	case 1:
+		tail |= uint64(*(*byte)(unsafe.Add(dp, i))) //nolint:gosec
+	case 0:
+		tail = P1
+	}
+	return WH64Det(tail^uint64(n)*P2, h)
 }
 
 // HashFallbackMaphash is the generic fallback hasher which uses
