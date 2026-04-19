@@ -255,10 +255,12 @@ func (thisSet *Set3[T]) Contains(element T) bool {
 	groupCtrl := thisSet.groupCtrl
 	groupSlot := thisSet.groupSlot
 	groupCount := uint64(len(groupCtrl))
+	_ = groupSlot[groupCount-1] // bounds-check elimination hint
 	currentGroupIndex := getGroupIndex(hash, groupCount)
 	for {
 		ctrl := groupCtrl[currentGroupIndex]
 		H2matches := set3ctlrMatchH2(ctrl, H2)
+		emptyMatches := set3ctlrMatchEmpty(ctrl)
 		if H2matches != 0 {
 			slot := &(groupSlot[currentGroupIndex])
 			for H2matches != 0 {
@@ -273,7 +275,6 @@ func (thisSet *Set3[T]) Contains(element T) bool {
 		}
 		// |key| is not in group |g|,
 		// stop probing if we see an empty slot
-		emptyMatches := set3ctlrMatchEmpty(ctrl)
 		if emptyMatches != 0 {
 			// there is an empty slot - the element, if it had been added, hat either
 			// been found until now or it had been added in the next empty spot -
@@ -708,6 +709,7 @@ func (thisSet *Set3[T]) Remove(element T) bool {
 	groupCtrl := thisSet.groupCtrl
 	groupSlot := thisSet.groupSlot
 	groupCount := uint64(len(groupCtrl))
+	_ = groupSlot[groupCount-1] // bounds-check elimination hint
 	currentGroupIndex := getGroupIndex(hash, groupCount)
 	for {
 		ctrl := groupCtrl[currentGroupIndex]
