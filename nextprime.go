@@ -90,16 +90,42 @@ func primeTestDivisors(candidate uint64) <-chan uint64 {
 }
 
 func isPrime(x uint64) bool {
-	if x^1 == 1 { // odd number test
-		if x == 2 {
-			return true
-		}
+	if x < 2 {
 		return false
 	}
-	for p := range primeTestDivisors(x) {
-		if x%p == 0 {
-			return false
+	if x == 2 {
+		return true
+	}
+	if x&1 == 0 {
+		return false
+	}
+
+	for _, p := range &primesUnder64k {
+		pp := uint64(p)
+		sq := pp * pp
+		if sq > x {
+			return true
+		}
+		if x%pp == 0 {
+			return x == pp
 		}
 	}
-	return x >= 2
+
+	const lastPrimeUnder64k = uint64(65521)
+	for v := lastPrimeUnder64k + 4; v*v <= x; {
+		if x%v == 0 {
+			return false
+		}
+		v += 2
+		if v*v > x {
+			break
+		}
+		if x%v == 0 {
+			return false
+		}
+		// Skip the next odd value which is divisible by 3.
+		v += 4
+	}
+
+	return true
 }
