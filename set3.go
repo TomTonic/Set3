@@ -252,13 +252,15 @@ Example:
 func (thisSet *Set3[T]) Contains(element T) bool {
 	hash := thisSet.hashFunction.Hash(element)
 	H2 := (hash & 0x0000_0000_0000_007f)
-	groupCount := uint64(len(thisSet.groupCtrl))
+	groupCtrl := thisSet.groupCtrl
+	groupSlot := thisSet.groupSlot
+	groupCount := uint64(len(groupCtrl))
 	currentGroupIndex := getGroupIndex(hash, groupCount)
 	for {
-		ctrl := thisSet.groupCtrl[currentGroupIndex]
+		ctrl := groupCtrl[currentGroupIndex]
 		H2matches := set3ctlrMatchH2(ctrl, H2)
 		if H2matches != 0 {
-			slot := &(thisSet.groupSlot[currentGroupIndex])
+			slot := &(groupSlot[currentGroupIndex])
 			for H2matches != 0 {
 				s := set3nextMatch(&H2matches)
 				if element == slot[s] {
@@ -526,13 +528,15 @@ func (thisSet *Set3[T]) Add(element T) {
 	}
 	hash := thisSet.hashFunction.Hash(element)
 	H2 := (hash & 0x0000_0000_0000_007f)
-	groupCount := uint64(len(thisSet.groupCtrl))
+	groupCtrl := thisSet.groupCtrl
+	groupSlot := thisSet.groupSlot
+	groupCount := uint64(len(groupCtrl))
 	currentGroupIndex := getGroupIndex(hash, groupCount)
 	for {
-		ctrl := thisSet.groupCtrl[currentGroupIndex]
+		ctrl := groupCtrl[currentGroupIndex]
 		H2matches := set3ctlrMatchH2(ctrl, H2)
 		if H2matches != 0 {
-			slot := &(thisSet.groupSlot[currentGroupIndex])
+			slot := &(groupSlot[currentGroupIndex])
 			for H2matches != 0 {
 				s := set3nextMatch(&H2matches)
 				if element == slot[s] {
@@ -549,8 +553,8 @@ func (thisSet *Set3[T]) Add(element T) {
 		if emptyMatches != 0 {
 			// empty spot -> element can't be in thisSet (see Contains) -> insert
 			s := set3nextMatch(&emptyMatches)
-			thisSet.groupCtrl[currentGroupIndex] = setCTRLat(ctrl, H2, s)
-			thisSet.groupSlot[currentGroupIndex][s] = element
+			groupCtrl[currentGroupIndex] = setCTRLat(ctrl, H2, s)
+			groupSlot[currentGroupIndex][s] = element
 			thisSet.resident++
 			return
 
@@ -691,13 +695,15 @@ Example:
 func (thisSet *Set3[T]) Remove(element T) bool {
 	hash := thisSet.hashFunction.Hash(element)
 	H2 := (hash & 0x0000_0000_0000_007f)
-	groupCount := uint64(len(thisSet.groupCtrl))
+	groupCtrl := thisSet.groupCtrl
+	groupSlot := thisSet.groupSlot
+	groupCount := uint64(len(groupCtrl))
 	currentGroupIndex := getGroupIndex(hash, groupCount)
 	for {
-		ctrl := thisSet.groupCtrl[currentGroupIndex]
+		ctrl := groupCtrl[currentGroupIndex]
 		H2matches := set3ctlrMatchH2(ctrl, H2)
 		if H2matches != 0 {
-			slot := &(thisSet.groupSlot[currentGroupIndex])
+			slot := &(groupSlot[currentGroupIndex])
 			for H2matches != 0 {
 				s := set3nextMatch(&H2matches)
 				if element == slot[s] {
@@ -709,10 +715,10 @@ func (thisSet *Set3[T]) Remove(element T) bool {
 					// by the existing empty slot. Therefore, reclaiming slot
 					// |s| will not cause premature termination of probes into |g|.
 					if set3ctlrMatchEmpty(ctrl) != 0 {
-						thisSet.groupCtrl[currentGroupIndex] = setCTRLat(ctrl, set3Empty, s)
+						groupCtrl[currentGroupIndex] = setCTRLat(ctrl, set3Empty, s)
 						thisSet.resident--
 					} else {
-						thisSet.groupCtrl[currentGroupIndex] = setCTRLat(ctrl, set3Deleted, s)
+						groupCtrl[currentGroupIndex] = setCTRLat(ctrl, set3Deleted, s)
 						thisSet.dead++
 						/*
 							// unfortunately, the following would be an invalid optimization. The algorithm might stop searching for elements too early.
@@ -725,7 +731,7 @@ func (thisSet *Set3[T]) Remove(element T) bool {
 						*/
 					}
 					var k T
-					thisSet.groupSlot[currentGroupIndex][s] = k
+					groupSlot[currentGroupIndex][s] = k
 					return true
 				}
 			}
