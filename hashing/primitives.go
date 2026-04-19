@@ -78,14 +78,15 @@ func HashPtr(p unsafe.Pointer, seed uint64) uint64 {
 func HashF32SM(p unsafe.Pointer, seed uint64) uint64 {
 	f := *(*float32)(p)
 	var bits uint32
-	if f == 0 {
+	switch {
+	case f == 0:
 		bits = 0
-	} else if math.IsNaN(float64(f)) {
+	case math.IsNaN(float64(f)):
 		// even though we can never "find" NaN in a set (as NaN != NaN),
 		// we still want all NaN values to hash to the same value
 		// to avoid unnecessary collisions with other values
 		bits = 0x7fc00000 // canonical representation of NaN for float32
-	} else {
+	default:
 		bits = math.Float32bits(f)
 	}
 	v := 0x0000000100000001 * uint64(bits) // broadcast to all 8 bytes, replication performed best in our benchmarks for the full float32 range
@@ -97,14 +98,15 @@ func HashF32SM(p unsafe.Pointer, seed uint64) uint64 {
 func HashF64WHdet(p unsafe.Pointer, seed uint64) uint64 {
 	f := *(*float64)(p)
 	var bits uint64
-	if f == 0 {
+	switch {
+	case f == 0:
 		bits = 0
-	} else if math.IsNaN(f) {
+	case math.IsNaN(f):
 		// even though we can never "find" NaN in a set (as NaN != NaN),
 		// we still want all NaN values to hash to the same value
 		// to avoid unnecessary collisions with other values
 		bits = 0x7ff8000000000000 // canonical representation of NaN for float64
-	} else {
+	default:
 		bits = math.Float64bits(f)
 	}
 	return WH64Det(bits, seed)
