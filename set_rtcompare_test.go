@@ -396,6 +396,12 @@ func runSetVsMapRtcompare[T comparable](
 		t.Fatalf("%s: empty key/query slices are invalid", caseName)
 	}
 
+	v1 := EmptyWithCapacity[T](uint32(len(keys))) //nolint:gosec
+	v2 := make(map[T]struct{}, len(keys))
+	if reflect.DeepEqual(v1, v2) {
+		t.Fatalf("%s: sanity check failed: empty Set3 and empty map are deeply equal (unexpected)", caseName)
+	}
+
 	var modeName string
 	var totalOps uint64
 	var runSet func() uint64
