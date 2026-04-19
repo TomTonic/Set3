@@ -9,7 +9,7 @@ import (
 )
 
 // generatedHashCache caches generated HashFunction values keyed by reflect.Type.
-// Each entry is computed once by generateHashFunction and reused for all
+// Each entry is computed once by GenerateHashFunction and reused for all
 // subsequent RuntimeHasher instances of the same concrete type K.
 var generatedHashCache sync.Map // map[reflect.Type]HashFunction
 
@@ -19,12 +19,16 @@ var generatedHashCache sync.Map // map[reflect.Type]HashFunction
 // unsafe.Pointer arithmetic and the project's primitive hash functions —
 // no reflection happens at hash time.
 //
-// The function handles:
-//   - Structs with any combination of scalar, float, complex, string,
-//     pointer, array, and nested struct fields (including padding).
-//   - Arrays whose element type can be handled.
-//   - Scalar types that need canonicalization (float32, float64,
-//     complex64, complex128).
+// The generated closures are designed for maximum throughput:
+//   - Contiguous runs of raw-byte-eligible fields are merged into single
+//     HashBytesBlock calls, maximizing cache locality and minimizing call
+//     overhead.
+//   - Special fields (float32, float64, complex64, complex128, string) are
+//     handled with canonicalization logic.
+//   - Small op counts (1–3) produce dedicated closures with captured
+//     function pointers that Go can inline.
+//   - The general N-op path uses an array of (HashFunction, offset) pairs
+//     with byte-block merging to minimize the number of calls.
 //
 // If the type cannot be handled (e.g. interface fields), the function
 // returns nil and the caller should fall back to HashFallbackMaphash.
@@ -44,13 +48,34 @@ func GenerateHashFunction(t reflect.Type) HashFunction {
 	return fn
 }
 
-// fieldHashOp describes how to hash a single fixed-size region of a value.
-// offset is the byte offset from the value's base pointer.
-// hasher is a HashFunction that hashes the bytes at that offset.
-type fieldHashOp struct {
+// ── Field op: a (function, offset) pair ─────────────────────────────────────
+
+// fieldOp represents one hashing step: call fn on the data at base+offset.
+type fieldOp struct {
+	fn     HashFunction
 	offset uintptr
-	hasher HashFunction
 }
+
+// ── Micro-op types (for flattening and merging) ─────────────────────────────
+
+type opKind uint8
+
+const (
+	opByteBlock  opKind = iota // hash [offset, offset+size) as raw bytes
+	opFloat32                  // read float32, canonicalize, mix
+	opFloat64                  // read float64, canonicalize, mix
+	opComplex64                // read complex64, canonicalize both parts
+	opComplex128               // read complex128, canonicalize both parts
+	opString                   // read string header, hash content bytes
+)
+
+type microOp struct {
+	kind   opKind
+	offset uintptr
+	size   int // only meaningful for opByteBlock
+}
+
+// ── Top-level builder ───────────────────────────────────────────────────────
 
 // buildHashFunction is the non-cached core of GenerateHashFunction.
 func buildHashFunction(t reflect.Type) HashFunction {
@@ -61,45 +86,29 @@ func buildHashFunction(t reflect.Type) HashFunction {
 	switch t.Kind() {
 	case reflect.Struct:
 		return buildStructHasher(t)
-
 	case reflect.Array:
 		return buildArrayHasher(t)
-
 	case reflect.Float32:
 		return HashF32SM
-
 	case reflect.Float64:
 		return HashF64WHdet
-
 	case reflect.Complex64:
 		return hashComplex64
-
 	case reflect.Complex128:
 		return hashComplex128
-
-	// Scalars that are safe for raw-byte hashing — we can just read the bytes.
 	case reflect.Bool,
 		reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64,
 		reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64,
-		reflect.Uintptr,
-		reflect.Pointer,
-		reflect.UnsafePointer,
-		reflect.Chan:
+		reflect.Uintptr, reflect.Pointer, reflect.UnsafePointer, reflect.Chan:
 		return buildScalarBytesHasher(t.Size())
-
 	case reflect.String:
 		return HashString
-
 	default:
-		// Interface, Func, Slice, Map — cannot generate a fast hasher.
 		return nil
 	}
 }
 
-// buildScalarBytesHasher returns a HashFunction that reads size bytes at the
-// pointer and hashes them through HashBytesBlock. Used for scalar types that
-// are safe for raw-byte hashing but were reached via a named/defined type
-// (so they didn't match the type switch in MakeRuntimeHasher).
+// buildScalarBytesHasher returns a HashFunction for a scalar type by size.
 func buildScalarBytesHasher(size uintptr) HashFunction {
 	switch size {
 	case 1:
@@ -111,7 +120,6 @@ func buildScalarBytesHasher(size uintptr) HashFunction {
 	case 8:
 		return HashI64WHdet
 	default:
-		// Unusual size — fall back to byte block.
 		s := int(size)
 		return func(p unsafe.Pointer, seed uint64) uint64 {
 			b := unsafe.Slice((*byte)(p), s) //nolint:gosec
@@ -120,94 +128,178 @@ func buildScalarBytesHasher(size uintptr) HashFunction {
 	}
 }
 
-// buildStructHasher analyses a struct type and generates a HashFunction that
-// hashes each field individually using the appropriate primitive hasher,
-// then chains the results. Fields are accessed via precomputed byte offsets —
-// no reflection at hash time.
-func buildStructHasher(t reflect.Type) HashFunction {
-	n := t.NumField()
-	if n == 0 {
-		// Empty struct — hash the size (0).
-		return func(_ unsafe.Pointer, seed uint64) uint64 {
-			return WH64Det(0, seed)
-		}
-	}
+// ── Struct flattening ───────────────────────────────────────────────────────
 
-	ops := make([]fieldHashOp, 0, n)
-	for i := range n {
+// flattenStructOps walks a struct type recursively and produces a flat slice
+// of leaf-level micro-ops. Returns nil if any field is unsupported.
+// Returns a non-nil empty slice if all fields are blank.
+func flattenStructOps(t reflect.Type, baseOffset uintptr) []microOp {
+	ops := make([]microOp, 0, t.NumField())
+
+	for i := range t.NumField() {
 		f := t.Field(i)
-
 		if f.Name == "_" {
-			// Blank fields are ignored by Go equality — skip them.
 			continue
 		}
 
-		h := buildHashFunction(f.Type)
-		if h == nil {
-			// Cannot hash this field type — give up.
+		off := baseOffset + f.Offset
+		inner := flattenTypeOps(f.Type, off)
+		if inner == nil {
 			return nil
 		}
-		ops = append(ops, fieldHashOp{offset: f.Offset, hasher: h})
+		ops = append(ops, inner...)
 	}
+	return ops
+}
 
-	if len(ops) == 0 {
-		// Struct with only blank fields.
-		return func(_ unsafe.Pointer, seed uint64) uint64 {
-			return WH64Det(0, seed)
-		}
-	}
-
-	// Optimised paths for small field counts to avoid slice overhead.
-	switch len(ops) {
-	case 1:
-		op := ops[0]
-		return func(p unsafe.Pointer, seed uint64) uint64 {
-			fp := unsafe.Add(p, op.offset) //nolint:gosec
-			return op.hasher(fp, seed)
-		}
-	case 2:
-		op0, op1 := ops[0], ops[1]
-		return func(p unsafe.Pointer, seed uint64) uint64 {
-			h := op0.hasher(unsafe.Add(p, op0.offset), seed) //nolint:gosec
-			return op1.hasher(unsafe.Add(p, op1.offset), h)  //nolint:gosec
-		}
-	case 3:
-		op0, op1, op2 := ops[0], ops[1], ops[2]
-		return func(p unsafe.Pointer, seed uint64) uint64 {
-			h := op0.hasher(unsafe.Add(p, op0.offset), seed) //nolint:gosec
-			h = op1.hasher(unsafe.Add(p, op1.offset), h)     //nolint:gosec
-			return op2.hasher(unsafe.Add(p, op2.offset), h)  //nolint:gosec
-		}
+// flattenTypeOps produces micro-ops for a single type at the given offset.
+func flattenTypeOps(ft reflect.Type, off uintptr) []microOp {
+	switch ft.Kind() {
+	case reflect.Float32:
+		return []microOp{{kind: opFloat32, offset: off}}
+	case reflect.Float64:
+		return []microOp{{kind: opFloat64, offset: off}}
+	case reflect.Complex64:
+		return []microOp{{kind: opComplex64, offset: off}}
+	case reflect.Complex128:
+		return []microOp{{kind: opComplex128, offset: off}}
+	case reflect.String:
+		return []microOp{{kind: opString, offset: off}}
+	case reflect.Struct:
+		return flattenStructOps(ft, off)
+	case reflect.Array:
+		return flattenArrayOps(ft, off)
+	case reflect.Bool,
+		reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64,
+		reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64,
+		reflect.Uintptr, reflect.Pointer, reflect.UnsafePointer, reflect.Chan:
+		return []microOp{{kind: opByteBlock, offset: off, size: int(ft.Size())}}
 	default:
-		// General N-field path.
-		frozen := make([]fieldHashOp, len(ops))
-		copy(frozen, ops)
-		return func(p unsafe.Pointer, seed uint64) uint64 {
-			h := seed
-			for _, op := range frozen {
-				h = op.hasher(unsafe.Add(p, op.offset), h) //nolint:gosec
-			}
-			return h
-		}
+		return nil
 	}
 }
 
-// buildArrayHasher generates a HashFunction for array types. If the element
-// type is eligible for raw-byte-block hashing, the entire array is hashed as
-// a byte block. Otherwise, each element is hashed individually.
-func buildArrayHasher(t reflect.Type) HashFunction {
-	elemType := t.Elem()
+// flattenArrayOps produces micro-ops for an array type.
+func flattenArrayOps(t reflect.Type, baseOffset uintptr) []microOp {
 	arrLen := t.Len()
-
 	if arrLen == 0 {
+		return []microOp{}
+	}
+
+	if CanUseUnsafeRawByteBlockHasherType(t).Eligible {
+		return []microOp{{kind: opByteBlock, offset: baseOffset, size: int(t.Size())}}
+	}
+
+	elemType := t.Elem()
+	elemSize := elemType.Size()
+	var ops []microOp
+	for i := range arrLen {
+		off := baseOffset + uintptr(i)*elemSize
+		inner := flattenTypeOps(elemType, off)
+		if inner == nil {
+			return nil
+		}
+		ops = append(ops, inner...)
+	}
+	return ops
+}
+
+// ── Byte-block merging ──────────────────────────────────────────────────────
+
+// mergeByteBlocks coalesces adjacent opByteBlock ops into larger blocks.
+func mergeByteBlocks(ops []microOp) []microOp {
+	if len(ops) == 0 {
+		return ops
+	}
+	merged := make([]microOp, 0, len(ops))
+	cur := ops[0]
+	for _, op := range ops[1:] {
+		if cur.kind == opByteBlock && op.kind == opByteBlock &&
+			op.offset == cur.offset+uintptr(cur.size) {
+			cur.size += op.size
+		} else {
+			merged = append(merged, cur)
+			cur = op
+		}
+	}
+	return append(merged, cur)
+}
+
+// ── Convert micro-ops to fieldOps ───────────────────────────────────────────
+
+// microOpToFieldOp converts a micro-op into a fieldOp with a concrete
+// HashFunction. For byte blocks of known small sizes (1, 2, 4, 8 bytes),
+// specialized scalar hashers are used instead of HashBytesBlock to enable
+// inlining and avoid the slice overhead.
+func microOpToFieldOp(op microOp) fieldOp {
+	switch op.kind {
+	case opByteBlock:
+		size := op.size
+		var fn HashFunction
+		switch size {
+		case 1:
+			fn = SwirlByte
+		case 2:
+			fn = HashI16SM
+		case 4:
+			fn = HashI32WHdet
+		case 8:
+			fn = HashI64WHdet
+		default:
+			fn = func(p unsafe.Pointer, seed uint64) uint64 {
+				b := unsafe.Slice((*byte)(p), size) //nolint:gosec
+				return HashBytesBlock(seed, b)
+			}
+		}
+		return fieldOp{fn: fn, offset: op.offset}
+	case opFloat32:
+		return fieldOp{fn: hashFloat32Inline, offset: op.offset}
+	case opFloat64:
+		return fieldOp{fn: hashFloat64Inline, offset: op.offset}
+	case opComplex64:
+		return fieldOp{fn: hashComplex64, offset: op.offset}
+	case opComplex128:
+		return fieldOp{fn: hashComplex128, offset: op.offset}
+	case opString:
+		return fieldOp{fn: HashString, offset: op.offset}
+	default:
+		return fieldOp{fn: func(_ unsafe.Pointer, seed uint64) uint64 { return seed }, offset: op.offset}
+	}
+}
+
+// ── Struct & array hashers ──────────────────────────────────────────────────
+
+// buildStructHasher flattens a struct into micro-ops, merges byte blocks,
+// and emits an optimal closure.
+func buildStructHasher(t reflect.Type) HashFunction {
+	if t.NumField() == 0 {
 		return func(_ unsafe.Pointer, seed uint64) uint64 {
 			return WH64Det(0, seed)
 		}
 	}
 
-	// If the element type is eligible for raw-byte-block hashing,
-	// hash the whole array as bytes.
-	if CanUseUnsafeRawByteBlockHasherType(elemType).Eligible {
+	ops := flattenStructOps(t, 0)
+	if ops == nil {
+		return nil
+	}
+	if len(ops) == 0 {
+		return func(_ unsafe.Pointer, seed uint64) uint64 {
+			return WH64Det(0, seed)
+		}
+	}
+
+	return buildClosureFromOps(mergeByteBlocks(ops))
+}
+
+// buildArrayHasher generates a HashFunction for array types.
+func buildArrayHasher(t reflect.Type) HashFunction {
+	if t.Len() == 0 {
+		return func(_ unsafe.Pointer, seed uint64) uint64 {
+			return WH64Det(0, seed)
+		}
+	}
+
+	if CanUseUnsafeRawByteBlockHasherType(t).Eligible {
 		totalSize := int(t.Size())
 		return func(p unsafe.Pointer, seed uint64) uint64 {
 			b := unsafe.Slice((*byte)(p), totalSize) //nolint:gosec
@@ -215,50 +307,121 @@ func buildArrayHasher(t reflect.Type) HashFunction {
 		}
 	}
 
-	elemHasher := buildHashFunction(elemType)
-	if elemHasher == nil {
+	ops := flattenArrayOps(t, 0)
+	if ops == nil {
 		return nil
 	}
-
-	elemSize := elemType.Size()
-
-	// Optimised for single-element arrays.
-	if arrLen == 1 {
-		return elemHasher
+	if len(ops) == 0 {
+		return func(_ unsafe.Pointer, seed uint64) uint64 {
+			return WH64Det(0, seed)
+		}
 	}
 
-	return func(p unsafe.Pointer, seed uint64) uint64 {
-		h := seed
-		for i := range arrLen {
-			ep := unsafe.Add(p, uintptr(i)*elemSize) //nolint:gosec
-			h = elemHasher(ep, h)
+	return buildClosureFromOps(mergeByteBlocks(ops))
+}
+
+// ── Closure construction ────────────────────────────────────────────────────
+
+// buildClosureFromOps creates a single HashFunction closure from micro-ops.
+// For 1–3 ops, fully unrolled closures with captured function pointers are
+// emitted so that Go can inline the inner calls. For larger counts, a tight
+// loop over a frozen fieldOp slice is used.
+func buildClosureFromOps(ops []microOp) HashFunction {
+	switch len(ops) {
+	case 0:
+		return func(_ unsafe.Pointer, seed uint64) uint64 {
+			return WH64Det(0, seed)
 		}
-		return h
+	case 1:
+		fop0 := microOpToFieldOp(ops[0])
+		fn0, off0 := fop0.fn, fop0.offset
+		return func(p unsafe.Pointer, seed uint64) uint64 {
+			return fn0(unsafe.Add(p, off0), seed) //nolint:gosec
+		}
+	case 2:
+		fop0, fop1 := microOpToFieldOp(ops[0]), microOpToFieldOp(ops[1])
+		fn0, off0 := fop0.fn, fop0.offset
+		fn1, off1 := fop1.fn, fop1.offset
+		return func(p unsafe.Pointer, seed uint64) uint64 {
+			h := fn0(unsafe.Add(p, off0), seed) //nolint:gosec
+			return fn1(unsafe.Add(p, off1), h)  //nolint:gosec
+		}
+	case 3:
+		fop0, fop1, fop2 := microOpToFieldOp(ops[0]), microOpToFieldOp(ops[1]), microOpToFieldOp(ops[2])
+		fn0, off0 := fop0.fn, fop0.offset
+		fn1, off1 := fop1.fn, fop1.offset
+		fn2, off2 := fop2.fn, fop2.offset
+		return func(p unsafe.Pointer, seed uint64) uint64 {
+			h := fn0(unsafe.Add(p, off0), seed) //nolint:gosec
+			h = fn1(unsafe.Add(p, off1), h)     //nolint:gosec
+			return fn2(unsafe.Add(p, off2), h)  //nolint:gosec
+		}
+	default:
+		frozen := make([]fieldOp, len(ops))
+		for i, op := range ops {
+			frozen[i] = microOpToFieldOp(op)
+		}
+		return func(p unsafe.Pointer, seed uint64) uint64 {
+			h := seed
+			for _, fop := range frozen {
+				h = fop.fn(unsafe.Add(p, fop.offset), h) //nolint:gosec
+			}
+			return h
+		}
 	}
 }
+
+// ── Inline hash helpers ─────────────────────────────────────────────────────
+
+// hashFloat32Inline hashes a float32 value with ±0 and NaN canonicalization.
+func hashFloat32Inline(p unsafe.Pointer, seed uint64) uint64 {
+	f := *(*float32)(p)
+	var bits uint32
+	switch {
+	case f == 0:
+		bits = 0
+	case math.IsNaN(float64(f)):
+		bits = 0x7fc00000
+	default:
+		bits = math.Float32bits(f)
+	}
+	v := 0x0000000100000001 * uint64(bits)
+	return Splitmix64(seed ^ v)
+}
+
+// hashFloat64Inline hashes a float64 value with ±0 and NaN canonicalization.
+func hashFloat64Inline(p unsafe.Pointer, seed uint64) uint64 {
+	f := *(*float64)(p)
+	var bits uint64
+	switch {
+	case f == 0:
+		bits = 0
+	case math.IsNaN(f):
+		bits = 0x7ff8000000000000
+	default:
+		bits = math.Float64bits(f)
+	}
+	return WH64Det(bits, seed)
+}
+
+// ── Complex hashers ─────────────────────────────────────────────────────────
 
 // hashComplex64 hashes a complex64 value by canonicalizing and hashing
 // both float32 components and combining the results.
 func hashComplex64(p unsafe.Pointer, seed uint64) uint64 {
 	c := *(*complex64)(p)
-	r := real(c)
-	i := imag(c)
-	rBits := canonicalF32Bits(r)
-	iBits := canonicalF32Bits(i)
-	h := WH32DetGR(rBits, seed)
-	return WH32DetGR(iBits, h)
+	r, i := real(c), imag(c)
+	h := WH32DetGR(canonicalF32Bits(r), seed)
+	return WH32DetGR(canonicalF32Bits(i), h)
 }
 
 // hashComplex128 hashes a complex128 value by canonicalizing and hashing
 // both float64 components and combining the results.
 func hashComplex128(p unsafe.Pointer, seed uint64) uint64 {
 	c := *(*complex128)(p)
-	r := real(c)
-	i := imag(c)
-	rBits := canonicalF64Bits(r)
-	iBits := canonicalF64Bits(i)
-	h := WH64Det(rBits, seed)
-	return WH64Det(iBits, h)
+	r, i := real(c), imag(c)
+	h := WH64Det(canonicalF64Bits(r), seed)
+	return WH64Det(canonicalF64Bits(i), h)
 }
 
 // canonicalF32Bits returns the IEEE-754 bit representation of f after
