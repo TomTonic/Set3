@@ -151,7 +151,9 @@ func evaluateCandidateMExhaustive(c rankCandidateM, total uint64, toRaw func(uin
 func evaluateCandidateMFromChan(c rankCandidateM, ch <-chan uint64, total uint64, seed uint64, t *testing.T) rankResultM {
 	const progressStep uint64 = 1 << 29
 
-	groupCounts := getGroupCountsSet3Rank()
+	// For sample-based runs, cap group counts to keep expected occupancy per bucket
+	// meaningful; otherwise maxDev is dominated by sparse-sampling noise.
+	groupCounts := selectGroupCountsForSample(total)
 	groupHists := make([][]uint64, len(groupCounts))
 	for i, gc := range groupCounts {
 		groupHists[i] = make([]uint64, gc)
@@ -316,10 +318,10 @@ func canonicalF32Values() <-chan uint64 {
 // canonicalF64Values returns a channel that emits canonical float64 values as uint64:
 //  1. 0x0000000000000000 (canonical +0.0)
 //  2. 0x7ff8000000000000 (canonical NaN)
-//  3. up to sampleCount non-special values drawn from a CPRNG (OS-seeded).
+//  3. up to sampleCount non-special values drawn from a deterministic DPRNG.
 //
 // Total emitted: sampleCount + 2
-func canonicalF64Values(sampleCount uint64) <-chan uint64 {
+func canonicalF64Values(sampleCount uint64, sampleSeed uint64) <-chan uint64 {
 	ch := make(chan uint64, 8192)
 	go func() {
 		defer close(ch)
@@ -327,8 +329,8 @@ func canonicalF64Values(sampleCount uint64) <-chan uint64 {
 		ch <- 0
 		// 2. canonical NaN
 		ch <- canonicalNaNF64
-		// 3. CPRNG-sampled non-special values
-		rng := rtcompare.NewCPRNG(8192)
+		// 3. DPRNG-sampled non-special values
+		rng := rtcompare.NewDPRNG(sampleSeed)
 		emitted := uint64(0)
 		for emitted < sampleCount {
 			u := rng.Uint64()
@@ -388,7 +390,7 @@ func TestCanonicalF32ValuesGenerator(t *testing.T) {
 // TestCanonicalF64ValuesGenerator verifies the float64 generator contract.
 func TestCanonicalF64ValuesGenerator(t *testing.T) {
 	const sampleCount = 100_000
-	ch := canonicalF64Values(sampleCount)
+	ch := canonicalF64Values(sampleCount, hashRankSampleSeedDefault)
 
 	v0, ok0 := <-ch
 	if !ok0 || v0 != 0 {
@@ -506,31 +508,79 @@ func candidateSetF32() []rankCandidateM {
 // Parallelism: SET3_HASH_MULTI_WORKERS=<N>
 func TestHashRankF32Exhaustive(t *testing.T) {
 	if os.Getenv("SET3_HASH_EXHAUSTIVE_MULTI") != "1" {
-		//		t.Skip("set SET3_HASH_EXHAUSTIVE_MULTI=1 to run")
+		t.Skip("set SET3_HASH_EXHAUSTIVE_MULTI=1 to run")
 	}
 
 	const total uint64 = (1 << 32) - (1 << 24) + 2
-	seed := uint64(0x1234_5678_9abc_def0)
+	seeds := hashRankSeedsFromEnv()
 	candidates := candidateSetF32()
 	defaultWorkers := max(runtime.GOMAXPROCS(0)/2, 1)
 	workerCount := envInt("SET3_HASH_MULTI_WORKERS", defaultWorkers)
 	workerCount = min(workerCount, len(candidates))
-	t.Logf("float32 exhaustive: %d workers, %d candidates, %d canonical values", workerCount, len(candidates), total)
+	t.Logf("float32 exhaustive: %d workers, %d candidates, %d canonical values, %d seeds", workerCount, len(candidates), total, len(seeds))
 
-	var nextIdx int
-	var idxMu sync.Mutex
-	results := evaluateCandidatesMConcurrent(candidates, workerCount, func(c rankCandidateM) rankResultM {
-		idxMu.Lock()
-		nextIdx++
-		idx := nextIdx
-		idxMu.Unlock()
-		t.Logf("[%d/%d] %s", idx, len(candidates), c.label)
-		return evaluateCandidateMFromChan(c, canonicalF32Values(), total, seed, t)
-	})
+	seedSums := make([]rankResultM, len(candidates))
+	for i, c := range candidates {
+		seedSums[i].label = c.label
+		seedSums[i].isProd = c.isProd
+	}
 
-	rankResultsM(results)
-	printRankingM(fmt.Sprintf("FLOAT32 EXHAUSTIVE (all canonical values, seed=%#x)", seed), results)
-	t.Logf("Best: %s (score=%.6f)", results[0].label, results[0].score)
+	for si, seed := range seeds {
+		var nextIdx int
+		var idxMu sync.Mutex
+		results := evaluateCandidatesMConcurrent(candidates, workerCount, func(c rankCandidateM) rankResultM {
+			idxMu.Lock()
+			nextIdx++
+			idx := nextIdx
+			idxMu.Unlock()
+			t.Logf("seed %d/%d [%d/%d] %s", si+1, len(seeds), idx, len(candidates), c.label)
+			return evaluateCandidateMFromChan(c, canonicalF32Values(), total, seed, t)
+		})
+
+		ranked := append([]rankResultM(nil), results...)
+		rankResultsM(ranked)
+		printRankingM(fmt.Sprintf("FLOAT32 EXHAUSTIVE SEED %d/%d (all canonical values, seed=%#x)", si+1, len(seeds), seed), ranked)
+
+		for i := range results {
+			r := results[i]
+			seedSums[i].samples += r.samples
+			seedSums[i].groupCounts = r.groupCounts
+			seedSums[i].groupSamples += r.groupSamples
+			seedSums[i].lowRelStdPct += r.lowRelStdPct
+			seedSums[i].lowMaxDevPct += r.lowMaxDevPct
+			seedSums[i].highRelStdPct += r.highRelStdPct
+			seedSums[i].highMaxDevPct += r.highMaxDevPct
+			seedSums[i].lowChi2 += r.lowChi2
+			seedSums[i].highChi2 += r.highChi2
+			seedSums[i].groupRelStdMeanPct += r.groupRelStdMeanPct
+			seedSums[i].groupMaxDevMeanPct += r.groupMaxDevMeanPct
+			seedSums[i].groupRelStdWorstPct += r.groupRelStdWorstPct
+			seedSums[i].groupMaxDevWorstPct += r.groupMaxDevWorstPct
+		}
+	}
+
+	combined := make([]rankResultM, len(seedSums))
+	div := float64(len(seeds))
+	for i := range seedSums {
+		combined[i] = seedSums[i]
+		combined[i].samples /= uint64(len(seeds))
+		combined[i].groupSamples /= uint64(len(seeds))
+		combined[i].lowRelStdPct /= div
+		combined[i].lowMaxDevPct /= div
+		combined[i].highRelStdPct /= div
+		combined[i].highMaxDevPct /= div
+		combined[i].lowChi2 /= div
+		combined[i].highChi2 /= div
+		combined[i].groupRelStdMeanPct /= div
+		combined[i].groupMaxDevMeanPct /= div
+		combined[i].groupRelStdWorstPct /= div
+		combined[i].groupMaxDevWorstPct /= div
+		scoreResultM(&combined[i])
+	}
+
+	rankResultsM(combined)
+	printRankingM(fmt.Sprintf("FLOAT32 EXHAUSTIVE COMBINED (all canonical values, seeds=%d)", len(seeds)), combined)
+	t.Logf("Best across %d seeds: %s (score=%.6f)", len(seeds), combined[0].label, combined[0].score)
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -599,27 +649,74 @@ func candidateSetI16() []rankCandidateM {
 
 // TestHashRankI16Exhaustive evaluates all candidates over all 2^16 int16 values.
 func TestHashRankI16Exhaustive(t *testing.T) {
-
 	const total uint64 = 1 << 16
-	seed := uint64(0x1234_5678_9abc_def0)
+	seeds := hashRankSeedsFromEnv()
 	candidates := candidateSetI16()
 	workerCount := min(runtime.GOMAXPROCS(0), len(candidates))
-	t.Logf("int16 exhaustive: %d workers, %d candidates, %d values", workerCount, len(candidates), total)
+	t.Logf("int16 exhaustive: %d workers, %d candidates, %d values, %d seeds", workerCount, len(candidates), total, len(seeds))
 
-	var nextIdx int
-	var idxMu sync.Mutex
-	results := evaluateCandidatesMConcurrent(candidates, workerCount, func(c rankCandidateM) rankResultM {
-		idxMu.Lock()
-		nextIdx++
-		idx := nextIdx
-		idxMu.Unlock()
-		t.Logf("[%d/%d] %s", idx, len(candidates), c.label)
-		return evaluateCandidateMExhaustive(c, total, func(i uint64) uint64 { return i }, seed, t)
-	})
+	seedSums := make([]rankResultM, len(candidates))
+	for i, c := range candidates {
+		seedSums[i].label = c.label
+		seedSums[i].isProd = c.isProd
+	}
 
-	rankResultsM(results)
-	printRankingM(fmt.Sprintf("INT16 EXHAUSTIVE (all 2^16 values, seed=%#x)", seed), results)
-	t.Logf("Best: %s (score=%.6f)", results[0].label, results[0].score)
+	for si, seed := range seeds {
+		var nextIdx int
+		var idxMu sync.Mutex
+		results := evaluateCandidatesMConcurrent(candidates, workerCount, func(c rankCandidateM) rankResultM {
+			idxMu.Lock()
+			nextIdx++
+			idx := nextIdx
+			idxMu.Unlock()
+			t.Logf("seed %d/%d [%d/%d] %s", si+1, len(seeds), idx, len(candidates), c.label)
+			return evaluateCandidateMExhaustive(c, total, func(i uint64) uint64 { return i }, seed, t)
+		})
+
+		ranked := append([]rankResultM(nil), results...)
+		rankResultsM(ranked)
+		printRankingM(fmt.Sprintf("INT16 EXHAUSTIVE SEED %d/%d (all 2^16 values, seed=%#x)", si+1, len(seeds), seed), ranked)
+
+		for i := range results {
+			r := results[i]
+			seedSums[i].samples += r.samples
+			seedSums[i].groupCounts = r.groupCounts
+			seedSums[i].groupSamples += r.groupSamples
+			seedSums[i].lowRelStdPct += r.lowRelStdPct
+			seedSums[i].lowMaxDevPct += r.lowMaxDevPct
+			seedSums[i].highRelStdPct += r.highRelStdPct
+			seedSums[i].highMaxDevPct += r.highMaxDevPct
+			seedSums[i].lowChi2 += r.lowChi2
+			seedSums[i].highChi2 += r.highChi2
+			seedSums[i].groupRelStdMeanPct += r.groupRelStdMeanPct
+			seedSums[i].groupMaxDevMeanPct += r.groupMaxDevMeanPct
+			seedSums[i].groupRelStdWorstPct += r.groupRelStdWorstPct
+			seedSums[i].groupMaxDevWorstPct += r.groupMaxDevWorstPct
+		}
+	}
+
+	combined := make([]rankResultM, len(seedSums))
+	div := float64(len(seeds))
+	for i := range seedSums {
+		combined[i] = seedSums[i]
+		combined[i].samples /= uint64(len(seeds))
+		combined[i].groupSamples /= uint64(len(seeds))
+		combined[i].lowRelStdPct /= div
+		combined[i].lowMaxDevPct /= div
+		combined[i].highRelStdPct /= div
+		combined[i].highMaxDevPct /= div
+		combined[i].lowChi2 /= div
+		combined[i].highChi2 /= div
+		combined[i].groupRelStdMeanPct /= div
+		combined[i].groupMaxDevMeanPct /= div
+		combined[i].groupRelStdWorstPct /= div
+		combined[i].groupMaxDevWorstPct /= div
+		scoreResultM(&combined[i])
+	}
+
+	rankResultsM(combined)
+	printRankingM(fmt.Sprintf("INT16 EXHAUSTIVE COMBINED (all 2^16 values, seeds=%d)", len(seeds)), combined)
+	t.Logf("Best across %d seeds: %s (score=%.6f)", len(seeds), combined[0].label, combined[0].score)
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -675,9 +772,11 @@ func TestHashRankI64Sample(t *testing.T) {
 	}
 
 	sampleCount := envUint64("SET3_HASH64_SAMPLES", hash64SamplesDefault)
-	seed := uint64(0x1234_5678_9abc_def0)
+	hashSeeds := hashRankSeedsFromEnv()
 
-	rng := rtcompare.NewCPRNG(8192)
+	// Deterministic sample generation keeps candidate ranking stable between runs.
+	sampleSeed := envUint64("SET3_HASH_RANK_SAMPLE_SEED", hashRankSampleSeedDefault)
+	rng := rtcompare.NewDPRNG(sampleSeed)
 	rawBits := make([]uint64, sampleCount)
 	for i := range rawBits {
 		rawBits[i] = rng.Uint64()
@@ -685,15 +784,63 @@ func TestHashRankI64Sample(t *testing.T) {
 
 	candidates := candidateSetI64()
 	workerCount := min(envInt("SET3_HASH_MULTI_WORKERS", runtime.GOMAXPROCS(0)), len(candidates))
-	t.Logf("int64 sample: %d workers, %d candidates, %d values", workerCount, len(candidates), sampleCount)
+	t.Logf("int64 sample: %d workers, %d candidates, %d values (sampleSeed=%#x, hashSeeds=%d)", workerCount, len(candidates), sampleCount, sampleSeed, len(hashSeeds))
 
-	results := evaluateCandidatesMConcurrent(candidates, workerCount, func(c rankCandidateM) rankResultM {
-		return evaluateCandidateMFromBits(c, rawBits, seed)
-	})
+	seedSums := make([]rankResultM, len(candidates))
+	for i, c := range candidates {
+		seedSums[i].label = c.label
+		seedSums[i].isProd = c.isProd
+	}
 
-	rankResultsM(results)
-	printRankingM(fmt.Sprintf("INT64 SAMPLE (N=%d CPRNG, seed=%#x)", sampleCount, seed), results)
-	t.Logf("Best: %s (score=%.6f)", results[0].label, results[0].score)
+	for si, seed := range hashSeeds {
+		results := evaluateCandidatesMConcurrent(candidates, workerCount, func(c rankCandidateM) rankResultM {
+			return evaluateCandidateMFromBits(c, rawBits, seed)
+		})
+
+		ranked := append([]rankResultM(nil), results...)
+		rankResultsM(ranked)
+		printRankingM(fmt.Sprintf("INT64 SAMPLE SEED %d/%d (N=%d DPRNG values, hashSeed=%#x, sampleSeed=%#x)", si+1, len(hashSeeds), sampleCount, seed, sampleSeed), ranked)
+
+		for i := range results {
+			r := results[i]
+			seedSums[i].samples += r.samples
+			seedSums[i].groupCounts = r.groupCounts
+			seedSums[i].groupSamples += r.groupSamples
+			seedSums[i].lowRelStdPct += r.lowRelStdPct
+			seedSums[i].lowMaxDevPct += r.lowMaxDevPct
+			seedSums[i].highRelStdPct += r.highRelStdPct
+			seedSums[i].highMaxDevPct += r.highMaxDevPct
+			seedSums[i].lowChi2 += r.lowChi2
+			seedSums[i].highChi2 += r.highChi2
+			seedSums[i].groupRelStdMeanPct += r.groupRelStdMeanPct
+			seedSums[i].groupMaxDevMeanPct += r.groupMaxDevMeanPct
+			seedSums[i].groupRelStdWorstPct += r.groupRelStdWorstPct
+			seedSums[i].groupMaxDevWorstPct += r.groupMaxDevWorstPct
+		}
+	}
+
+	combined := make([]rankResultM, len(seedSums))
+	div := float64(len(hashSeeds))
+	for i := range seedSums {
+		combined[i] = seedSums[i]
+		combined[i].samples /= uint64(len(hashSeeds))
+		combined[i].groupSamples /= uint64(len(hashSeeds))
+		combined[i].lowRelStdPct /= div
+		combined[i].lowMaxDevPct /= div
+		combined[i].highRelStdPct /= div
+		combined[i].highMaxDevPct /= div
+		combined[i].lowChi2 /= div
+		combined[i].highChi2 /= div
+		combined[i].groupRelStdMeanPct /= div
+		combined[i].groupMaxDevMeanPct /= div
+		combined[i].groupRelStdWorstPct /= div
+		combined[i].groupMaxDevWorstPct /= div
+		scoreResultM(&combined[i])
+	}
+
+	rankResultsM(combined)
+	printRankingM(fmt.Sprintf("INT64 SAMPLE COMBINED (N=%d values, seeds=%d, sampleSeed=%#x)", sampleCount, len(hashSeeds), sampleSeed), combined)
+	t.Logf("Best across %d seeds: %s (score=%.6f)", len(hashSeeds), combined[0].label, combined[0].score)
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -764,18 +911,68 @@ func TestHashRankF64Sample(t *testing.T) {
 	}
 
 	sampleCount := envUint64("SET3_HASH64_SAMPLES", hash64SamplesDefault)
-	seed := uint64(0x1234_5678_9abc_def0)
+	// Shared sample seed with 32-bit ranking tests to make comparisons reproducible.
+	sampleSeed := envUint64("SET3_HASH_RANK_SAMPLE_SEED", hashRankSampleSeedDefault)
+	hashSeeds := hashRankSeedsFromEnv()
 	total := sampleCount + 2 // +2 for canonical zero and canonical NaN
 
 	candidates := candidateSetF64()
 	workerCount := min(envInt("SET3_HASH_MULTI_WORKERS", runtime.GOMAXPROCS(0)), len(candidates))
-	t.Logf("float64 sample: %d workers, %d candidates, %d values (incl. zero and NaN)", workerCount, len(candidates), total)
+	t.Logf("float64 sample: %d workers, %d candidates, %d values (incl. zero and NaN, sampleSeed=%#x, hashSeeds=%d)", workerCount, len(candidates), total, sampleSeed, len(hashSeeds))
 
-	results := evaluateCandidatesMConcurrent(candidates, workerCount, func(c rankCandidateM) rankResultM {
-		return evaluateCandidateMFromChan(c, canonicalF64Values(sampleCount), total, seed, t)
-	})
+	seedSums := make([]rankResultM, len(candidates))
+	for i, c := range candidates {
+		seedSums[i].label = c.label
+		seedSums[i].isProd = c.isProd
+	}
 
-	rankResultsM(results)
-	printRankingM(fmt.Sprintf("FLOAT64 SAMPLE (N=%d canonical, seed=%#x)", total, seed), results)
-	t.Logf("Best: %s (score=%.6f)", results[0].label, results[0].score)
+	for si, seed := range hashSeeds {
+		results := evaluateCandidatesMConcurrent(candidates, workerCount, func(c rankCandidateM) rankResultM {
+			return evaluateCandidateMFromChan(c, canonicalF64Values(sampleCount, sampleSeed), total, seed, t)
+		})
+
+		ranked := append([]rankResultM(nil), results...)
+		rankResultsM(ranked)
+		printRankingM(fmt.Sprintf("FLOAT64 SAMPLE SEED %d/%d (N=%d canonical values, hashSeed=%#x, sampleSeed=%#x)", si+1, len(hashSeeds), total, seed, sampleSeed), ranked)
+
+		for i := range results {
+			r := results[i]
+			seedSums[i].samples += r.samples
+			seedSums[i].groupCounts = r.groupCounts
+			seedSums[i].groupSamples += r.groupSamples
+			seedSums[i].lowRelStdPct += r.lowRelStdPct
+			seedSums[i].lowMaxDevPct += r.lowMaxDevPct
+			seedSums[i].highRelStdPct += r.highRelStdPct
+			seedSums[i].highMaxDevPct += r.highMaxDevPct
+			seedSums[i].lowChi2 += r.lowChi2
+			seedSums[i].highChi2 += r.highChi2
+			seedSums[i].groupRelStdMeanPct += r.groupRelStdMeanPct
+			seedSums[i].groupMaxDevMeanPct += r.groupMaxDevMeanPct
+			seedSums[i].groupRelStdWorstPct += r.groupRelStdWorstPct
+			seedSums[i].groupMaxDevWorstPct += r.groupMaxDevWorstPct
+		}
+	}
+
+	combined := make([]rankResultM, len(seedSums))
+	div := float64(len(hashSeeds))
+	for i := range seedSums {
+		combined[i] = seedSums[i]
+		combined[i].samples /= uint64(len(hashSeeds))
+		combined[i].groupSamples /= uint64(len(hashSeeds))
+		combined[i].lowRelStdPct /= div
+		combined[i].lowMaxDevPct /= div
+		combined[i].highRelStdPct /= div
+		combined[i].highMaxDevPct /= div
+		combined[i].lowChi2 /= div
+		combined[i].highChi2 /= div
+		combined[i].groupRelStdMeanPct /= div
+		combined[i].groupMaxDevMeanPct /= div
+		combined[i].groupRelStdWorstPct /= div
+		combined[i].groupMaxDevWorstPct /= div
+		scoreResultM(&combined[i])
+	}
+
+	rankResultsM(combined)
+	printRankingM(fmt.Sprintf("FLOAT64 SAMPLE COMBINED (N=%d canonical values, seeds=%d, sampleSeed=%#x)", total, len(hashSeeds), sampleSeed), combined)
+	t.Logf("Best across %d seeds: %s (score=%.6f)", len(hashSeeds), combined[0].label, combined[0].score)
 }
