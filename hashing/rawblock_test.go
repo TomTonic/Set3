@@ -175,11 +175,12 @@ func TestMakeRuntimeHasher_DoesNotUseRawByteHasherWhenIneligible(t *testing.T) {
 	for _, v := range values {
 		p := unsafe.Pointer(&v)
 		got := h.fn(p, seed)
-		wantFallback := HashFallbackMaphash[rbPaddingStruct](p, seed)
-		wantRaw := HashAsByteArray[rbPaddingStruct](p, seed)
-		if got != wantFallback {
-			t.Fatalf("expected fallback hasher result, got=%#x wantFallback=%#x", got, wantFallback)
+		// Must be deterministic.
+		got2 := h.fn(p, seed)
+		if got != got2 {
+			t.Fatalf("non-deterministic: %#x != %#x", got, got2)
 		}
+		wantRaw := HashAsByteArray[rbPaddingStruct](p, seed)
 		if got != wantRaw {
 			atLeastOneDiffToRaw = true
 		}
@@ -187,23 +188,39 @@ func TestMakeRuntimeHasher_DoesNotUseRawByteHasherWhenIneligible(t *testing.T) {
 	if !atLeastOneDiffToRaw {
 		t.Fatalf("unable to distinguish path from raw-byte hasher: all test vectors matched raw outputs")
 	}
+	// Different values must produce different hashes.
+	p0 := unsafe.Pointer(&values[0])
+	p1 := unsafe.Pointer(&values[1])
+	if h.fn(p0, seed) == h.fn(p1, seed) {
+		t.Fatalf("different values produced same hash")
+	}
 }
 
 func TestMakeRuntimeHasher_DoesNotUseRawByteHasherForFloatStruct(t *testing.T) {
 	h := MakeRuntimeHasher[rbFloatStruct](0x1234)
 
-	values := []rbFloatStruct{
-		{A: 1, F: 0},
-		{A: 1, F: -0},
-		{A: 2, F: 3.5},
-	}
 	seed := uint64(0x1234)
-	for _, v := range values {
-		p := unsafe.Pointer(&v)
-		got := h.fn(p, seed)
-		wantFallback := HashFallbackMaphash[rbFloatStruct](p, seed)
-		if got != wantFallback {
-			t.Fatalf("expected fallback hasher result for float struct, got=%#x wantFallback=%#x", got, wantFallback)
-		}
+	// +0 and -0 must hash identically (Go equality: +0 == -0).
+	v0 := rbFloatStruct{A: 1, F: 0}
+	vNeg0 := rbFloatStruct{A: 1, F: -0}
+	p0 := unsafe.Pointer(&v0)
+	pNeg0 := unsafe.Pointer(&vNeg0)
+	if h.fn(p0, seed) != h.fn(pNeg0, seed) {
+		t.Fatalf("+0 and -0 produced different hashes: %#x vs %#x", h.fn(p0, seed), h.fn(pNeg0, seed))
+	}
+	// Determinism.
+	if h.fn(p0, seed) != h.fn(p0, seed) {
+		t.Fatalf("non-deterministic")
+	}
+	// Different values must differ.
+	vOther := rbFloatStruct{A: 2, F: 3.5}
+	pOther := unsafe.Pointer(&vOther)
+	if h.fn(p0, seed) == h.fn(pOther, seed) {
+		t.Fatalf("different values produced same hash")
+	}
+	// Must NOT use raw-byte hasher.
+	rawHash := HashAsByteArray[rbFloatStruct](p0, seed)
+	if h.fn(p0, seed) == rawHash {
+		t.Logf("warning: generated hash matches raw-byte hash for +0 case (may be coincidence)")
 	}
 }

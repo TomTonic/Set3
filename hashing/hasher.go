@@ -86,17 +86,14 @@ func MakeRuntimeHasher[K comparable](seed uint64) RuntimeHasher[K] {
 			// Fast path for layouts that are safe for raw byte-block hashing
 			// according to Go equality semantics.
 			h.fn = HashAsByteArray[K]
+		case GenerateHashFunction(t) != nil:
+			// Reflection-based generator produced a fast, type-specific
+			// hash closure (e.g. for structs with padding, floats, strings,
+			// or complex fields). No reflection happens at hash time.
+			h.fn = GenerateHashFunction(t)
 		default:
 			// generic approach: use internal hash function from SwissMapType
 			h.fn = HashFallbackMaphash[K]
-
-			// alternative api package internal/abi is not allowed:
-			// var m map[K]struct{}
-			// mTyp := abi.TypeOf(m)
-			// maphashhasher := (*abi.SwissMapType)(unsafe.Pointer(mTyp)).Hasher
-			// h.fn = func(p unsafe.Pointer, seed uint64) uint64 {
-			// 	return uint64(maphashhasher(p, uintptr(seed)))
-			// }
 		}
 	}
 	return h
