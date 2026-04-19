@@ -1,3 +1,4 @@
+// Package main provides chi-squared power analysis.
 package main
 
 import (
@@ -348,7 +349,7 @@ func main() {
 			log.Fatal("target power not reachable within nMax.")
 		}
 		chi2CriticalVal := centralChi2Quantile(df, *alpha)
-		lambda := noncentralityLambda(uint64(nNeeded), dH1, dH0)
+		lambda := noncentralityLambda(uint64(nNeeded), dH1, dH0) //nolint:gosec
 
 		fmt.Printf("Mode         : n\n")
 		fmt.Printf("Categories   : %d (df=%.0f)\n", len(dH1), df)
@@ -360,9 +361,9 @@ func main() {
 		fmt.Printf("Power (at n)               : %.6f\n", pw)
 
 		if *mc > 0 {
-			df := float64(len(dH1) - 1)
-			chi2CriticalVal := centralChi2Quantile(df, *alpha)
-			pwmc := mcPower(uint64(nNeeded), chi2CriticalVal, dH1, dH0, *mc)
+			dfMC := float64(len(dH1) - 1)
+			chi2CriticalValMC := centralChi2Quantile(dfMC, *alpha)
+			pwmc := mcPower(uint64(nNeeded), chi2CriticalValMC, dH1, dH0, *mc) //nolint:gosec
 			fmt.Printf("Power (Monte Carlo, %d runs) : %.6f\n", *mc, pwmc)
 		}
 
