@@ -671,19 +671,22 @@ func TestSet3Subtract(t *testing.T) {
 func TestSet3Rehash(t *testing.T) {
 	data := genUint32Data(53)
 	set := FromArray(data)
-	assert.True(t, len(set.groupCtrl) == 12, "set shall contain 12 groups")
+	initialExpectedGroups := int(nextPrime(uint64(calcReqNrOfGroups(uint32(len(data) * 7 / 5)))) ) //nolint:gosec
+	assert.True(t, len(set.groupCtrl) == initialExpectedGroups, "set shall contain %d groups", initialExpectedGroups)
 	set.RehashToCapacity(200)
-	assert.True(t, len(set.groupCtrl) == 31, "set shall contain 30 groups")
+	rehashToCapacityExpected := int(nextPrime(uint64(calcReqNrOfGroups(200))))
+	assert.True(t, len(set.groupCtrl) == rehashToCapacityExpected, "set shall contain %d groups", rehashToCapacityExpected)
 	for _, e := range data {
 		assert.True(t, set.Contains(e), "set shall contain %v", e)
 	}
 	set.RehashToCapacity(20)
-	assert.True(t, len(set.groupCtrl) == 31, "set shall contain 30 groups")
+	assert.True(t, len(set.groupCtrl) == rehashToCapacityExpected, "set shall contain %d groups", rehashToCapacityExpected)
 	for _, e := range data {
 		assert.True(t, set.Contains(e), "set shall contain %v", e)
 	}
 	set.Rehash()
-	assert.True(t, len(set.groupCtrl) == 9, "set shall contain 9 groups")
+	rehashExpected := int(nextPrime(uint64(calcReqNrOfGroups(set.Size()))))
+	assert.True(t, len(set.groupCtrl) == rehashExpected, "set shall contain %d groups", rehashExpected)
 	for _, e := range data {
 		assert.True(t, set.Contains(e), "set shall contain %v", e)
 	}
