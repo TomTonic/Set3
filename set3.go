@@ -262,7 +262,10 @@ func (thisSet *Set3[T]) Contains(element T) bool {
 		if H2matches != 0 {
 			slot := &(groupSlot[currentGroupIndex])
 			for H2matches != 0 {
-				s := set3nextMatch(&H2matches)
+				// set s to the next match, i.e. the index of the next matching slot (starting from the LSB)
+				s := bits.TrailingZeros64(H2matches) >> 3 // returns the number of consecutive zero bits starting from the least-significant bit (LSB), e.g., for b=0b0010_1000, it returns 3
+				// clear the according bit in H2matches
+				H2matches &= H2matches - 1
 				if element == slot[s] {
 					return true
 				}
@@ -278,7 +281,7 @@ func (thisSet *Set3[T]) Contains(element T) bool {
 			return false
 		}
 		currentGroupIndex++ // carousel through all groups
-		if currentGroupIndex >= groupCount {
+		if currentGroupIndex == groupCount {
 			currentGroupIndex = 0
 		}
 	}
@@ -538,7 +541,10 @@ func (thisSet *Set3[T]) Add(element T) {
 		if H2matches != 0 {
 			slot := &(groupSlot[currentGroupIndex])
 			for H2matches != 0 {
-				s := set3nextMatch(&H2matches)
+				// set s to the next match, i.e. the index of the next matching slot (starting from the LSB)
+				s := bits.TrailingZeros64(H2matches) >> 3 // returns the number of consecutive zero bits starting from the least-significant bit (LSB), e.g., for b=0b0010_1000, it returns 3
+				// clear the according bit in H2matches
+				H2matches &= H2matches - 1
 				if element == slot[s] {
 					// found - element already in thisSet, just return
 					return
@@ -552,7 +558,9 @@ func (thisSet *Set3[T]) Add(element T) {
 
 		if emptyMatches != 0 {
 			// empty spot -> element can't be in thisSet (see Contains) -> insert
-			s := set3nextMatch(&emptyMatches)
+
+			// set s to the next match, i.e. the index of the next matching slot (starting from the LSB)
+			s := bits.TrailingZeros64(emptyMatches) >> 3 // returns the number of consecutive zero bits starting from the least-significant bit (LSB), e.g., for b=0b0010_1000, it returns 3
 			groupCtrl[currentGroupIndex] = setCTRLat(ctrl, H2, s)
 			groupSlot[currentGroupIndex][s] = element
 			thisSet.resident++
@@ -560,7 +568,7 @@ func (thisSet *Set3[T]) Add(element T) {
 
 		}
 		currentGroupIndex++ // carousel through all groups
-		if currentGroupIndex >= groupCount {
+		if currentGroupIndex == groupCount {
 			currentGroupIndex = 0
 		}
 	}
@@ -701,11 +709,15 @@ func (thisSet *Set3[T]) Remove(element T) bool {
 	currentGroupIndex := getGroupIndex(hash, groupCount)
 	for {
 		ctrl := groupCtrl[currentGroupIndex]
+		emptyMatches := set3ctlrMatchEmpty(ctrl)
 		H2matches := set3ctlrMatchH2(ctrl, H2)
 		if H2matches != 0 {
 			slot := &(groupSlot[currentGroupIndex])
 			for H2matches != 0 {
-				s := set3nextMatch(&H2matches)
+				// set s to the next match, i.e. the index of the next matching slot (starting from the LSB)
+				s := bits.TrailingZeros64(H2matches) >> 3 // returns the number of consecutive zero bits starting from the least-significant bit (LSB), e.g., for b=0b0010_1000, it returns 3
+				// clear the according bit in H2matches
+				H2matches &= H2matches - 1
 				if element == slot[s] {
 					// Found.
 					// optimization: if |m.ctrl[g]| contains any empty
@@ -714,7 +726,7 @@ func (thisSet *Set3[T]) Remove(element T) bool {
 					// Any probes into group |g| would already be terminated
 					// by the existing empty slot. Therefore, reclaiming slot
 					// |s| will not cause premature termination of probes into |g|.
-					if set3ctlrMatchEmpty(ctrl) != 0 {
+					if emptyMatches != 0 {
 						groupCtrl[currentGroupIndex] = setCTRLat(ctrl, set3Empty, s)
 						thisSet.resident--
 					} else {
@@ -739,13 +751,12 @@ func (thisSet *Set3[T]) Remove(element T) bool {
 
 		// |element| is not in group |g|,
 		// stop probing if we see an empty slot
-		emptyMatches := set3ctlrMatchEmpty(ctrl)
 		if emptyMatches != 0 {
 			// |element| absent
 			return false
 		}
 		currentGroupIndex++ // linear probing
-		if currentGroupIndex >= groupCount {
+		if currentGroupIndex == groupCount {
 			currentGroupIndex = 0
 		}
 	}
