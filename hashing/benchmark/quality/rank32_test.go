@@ -13,7 +13,7 @@ import (
 
 	"github.com/TomTonic/Set3/hashing"
 	"github.com/TomTonic/Set3/hashing/alternatives"
-	"github.com/TomTonic/Set3/hashing/benchmarks"
+	"github.com/TomTonic/Set3/hashing/benchmark"
 	"github.com/TomTonic/rtcompare"
 )
 
@@ -142,7 +142,7 @@ func calcReqNrOfGroupsLocal(reqCapa uint32) uint32 {
 // calcNextGroupCountLocal mirrors Set3's calcNextGroupCount growth formula.
 func calcNextGroupCountLocal(currentGroupCount uint32) uint32 {
 	n := uint32(max(math.Ceil(float64(currentGroupCount)*3.0/2.0), 2))
-	p := benchmarks.NextPrime(uint64(n))
+	p := benchmark.NextPrime(uint64(n))
 	return uint32(p)
 }
 
@@ -206,17 +206,17 @@ func buildGroupCountsSet3Rank() []uint32 {
 	counts := make([]uint32, 0, groupCountRehashPrefix+groupCountRankCap)
 
 	// Mirror Set3's real growth sequence for early-to-mid table sizes.
-	usualStartNumber := benchmarks.NextPrime(uint64(calcReqNrOfGroupsLocal(21)))
+	usualStartNumber := benchmark.NextPrime(uint64(calcReqNrOfGroupsLocal(21)))
 	current := uint32(usualStartNumber)
 	for range groupCountRehashPrefix {
 		counts = append(counts, current)
-		current = uint32(benchmarks.NextPrime(uint64(calcNextGroupCountLocal(current))))
+		current = uint32(benchmark.NextPrime(uint64(calcNextGroupCountLocal(current))))
 	}
 
 	// Add extra sizes from the filtered generator used in existing comparison tests.
-	for v := range benchmarks.FilteredNumbers(groupCountFilteredHint) {
+	for v := range benchmark.FilteredNumbers(groupCountFilteredHint) {
 		// Normalize to prime counts to stay aligned with Set3's real table sizing.
-		counts = append(counts, uint32(benchmarks.NextPrime(uint64(v))))
+		counts = append(counts, uint32(benchmark.NextPrime(uint64(v))))
 		if v >= groupCountFilteredMax {
 			break
 		}

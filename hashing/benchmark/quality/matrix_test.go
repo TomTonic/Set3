@@ -13,7 +13,7 @@ import (
 
 	"github.com/TomTonic/Set3/hashing"
 	"github.com/TomTonic/Set3/hashing/alternatives"
-	"github.com/TomTonic/Set3/hashing/benchmarks"
+	"github.com/TomTonic/Set3/hashing/benchmark"
 	"github.com/TomTonic/rtcompare"
 )
 
@@ -126,7 +126,7 @@ var hashFunctionsForUint16 = hashFunctionsForType{
 		ch := make(chan any, 8192)
 		go func() {
 			n := limit
-			x := benchmarks.XorShift16Star{State: rtcompare.NewCPRNG(16).Uint16() | 1} // non-zero random seed
+			x := benchmark.XorShift16Star{State: rtcompare.NewCPRNG(16).Uint16() | 1} // non-zero random seed
 			if n == 0 || n >= 1<<16 {
 				n = 1<<16 - 1
 			}
@@ -182,7 +182,7 @@ var hashFunctionsForUint32 = hashFunctionsForType{
 		ch := make(chan any, 8192)
 		go func() {
 			n := limit
-			x := benchmarks.XorShift32Star{State: rtcompare.NewCPRNG(16).Uint32() | 1} // non-zero random seed
+			x := benchmark.XorShift32Star{State: rtcompare.NewCPRNG(16).Uint32() | 1} // non-zero random seed
 			if n == 0 || n >= 1<<32 {
 				n = 1<<32 - 1
 			}
@@ -282,7 +282,7 @@ var hashFunctionsForFloat32 = hashFunctionsForType{
 		ch := make(chan any, 8192)
 		go func() {
 			n := limit
-			x := benchmarks.XorShift32Star{State: rtcompare.NewCPRNG(16).Uint32() | 1} // non-zero random seed
+			x := benchmark.XorShift32Star{State: rtcompare.NewCPRNG(16).Uint32() | 1} // non-zero random seed
 			if n == 0 || n > f32Cardinality {
 				n = f32Cardinality
 			}
@@ -367,7 +367,7 @@ var hashFunctionsForString = hashFunctionsForType{
 			ch <- string([]byte{0, 0})
 			count++
 			cprng := rtcompare.NewCPRNG(4096)
-			rng16 := benchmarks.XorShift16Star{State: cprng.Uint16() | 1} // non-zero random seed
+			rng16 := benchmark.XorShift16Star{State: cprng.Uint16() | 1} // non-zero random seed
 			for range 1<<16 - 1 {
 				if count >= limit {
 					return
@@ -381,7 +381,7 @@ var hashFunctionsForString = hashFunctionsForType{
 			}
 			ch <- string([]byte{0, 0, 0})
 			count++
-			rng24 := benchmarks.XorShift24Star{State: cprng.Uint32() | 1} // non-zero random seed
+			rng24 := benchmark.XorShift24Star{State: cprng.Uint32() | 1} // non-zero random seed
 			for range 1<<24 - 1 {
 				if count >= limit {
 					return
@@ -395,7 +395,7 @@ var hashFunctionsForString = hashFunctionsForType{
 			}
 			ch <- string([]byte{0, 0, 0, 0})
 			count++
-			rng32 := benchmarks.XorShift32Star{State: cprng.Uint32() | 1} // non-zero random seed
+			rng32 := benchmark.XorShift32Star{State: cprng.Uint32() | 1} // non-zero random seed
 			for range limit - count {
 				// length between 0 and 100 inclusive
 				additional_length := cprng.Uint32N(96)
@@ -632,7 +632,7 @@ func TestBucketMappingOfHashFunctionsForAllTypes(t *testing.T) {
 			shortname := functionName(hf)
 			rng := rtcompare.NewDPRNG(123456)
 			t.Run(hft.typesDescr+"/"+shortname, func(t *testing.T) {
-				for numGroups := range benchmarks.FilteredNumbers(numGroupSizes) {
+				for numGroups := range benchmark.FilteredNumbers(numGroupSizes) {
 					if float64(numGroups) > float64(hft.cardinality)/maxAvgGroupLoad {
 						t.Skipf("Hashing %d elements would never need %d groups or more.", hft.cardinality, numGroups)
 					}

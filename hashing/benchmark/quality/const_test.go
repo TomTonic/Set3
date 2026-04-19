@@ -9,7 +9,7 @@ import (
 	"testing"
 
 	"github.com/TomTonic/Set3/hashing"
-	"github.com/TomTonic/Set3/hashing/benchmarks"
+	"github.com/TomTonic/Set3/hashing/benchmark"
 	"github.com/TomTonic/rtcompare"
 )
 
@@ -94,7 +94,7 @@ func TestHashingCompare16BitConstantsForSplitMixGroupCountBuckets(t *testing.T) 
 	}
 	const numberOfGroupCountsToTest = 1721 // select higher values to get more accurate results. however 307 makes the test run for over 90 minutes, for example.
 	groupCountsToTest := make([]uint32, 0, numberOfGroupCountsToTest)
-	for v := range benchmarks.FilteredNumbers(numberOfGroupCountsToTest) {
+	for v := range benchmark.FilteredNumbers(numberOfGroupCountsToTest) {
 		groupCountsToTest = append(groupCountsToTest, uint32(v))
 		if v >= 10_083 { // Set3 will not need more then 10_083 groups to store 16-bit values in a set
 			break
@@ -215,17 +215,17 @@ func TestHashingCompare32BitConstantsForSplitMixGroupCountBuckets(t *testing.T) 
 	}
 	const numberOfGroupCountsToTest = 307 // select higher values to get more accurate results. however 307 makes the test run for over 90 minutes, for example.
 	groupCountsToTest := make([]uint32, 0, numberOfGroupCountsToTest)
-	usualStartNumber := benchmarks.NextPrime(uint64(math.Ceil(21.0 / maxAvgGroupLoad)))
+	usualStartNumber := benchmark.NextPrime(uint64(math.Ceil(21.0 / maxAvgGroupLoad)))
 	current := uint32(usualStartNumber)
 	for range min(numberOfGroupCountsToTest, 29) {
 		groupCountsToTest = append(groupCountsToTest, current)
-		current = uint32(benchmarks.NextPrime(uint64(float64(current) * groupGrowthFactor)))
+		current = uint32(benchmark.NextPrime(uint64(float64(current) * groupGrowthFactor)))
 	}
-	for v := range benchmarks.FilteredNumbers(numberOfGroupCountsToTest) {
+	for v := range benchmark.FilteredNumbers(numberOfGroupCountsToTest) {
 		groupCountsToTest = append(groupCountsToTest, uint32(v))
 		// make sure to produce enough unique numbers to match the required count
 		slices.Sort(groupCountsToTest)
-		groupCountsToTest = benchmarks.UniqueSortedUint32s(groupCountsToTest)
+		groupCountsToTest = benchmark.UniqueSortedUint32s(groupCountsToTest)
 		if len(groupCountsToTest) >= numberOfGroupCountsToTest {
 			break
 		}

@@ -6,4 +6,4 @@
 // See also:
 //   - [hashing/benchmark/quality] for hash distribution and ranking tests.
 //   - [hashing/benchmark/performance] for runtime performance comparisons.
-package benchmarks
+package benchmark

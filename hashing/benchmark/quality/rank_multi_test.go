@@ -26,7 +26,7 @@ import (
 
 	"github.com/TomTonic/Set3/hashing"
 	"github.com/TomTonic/Set3/hashing/alternatives"
-	"github.com/TomTonic/Set3/hashing/benchmarks"
+	"github.com/TomTonic/Set3/hashing/benchmark"
 	"github.com/TomTonic/rtcompare"
 )
 
@@ -307,7 +307,7 @@ func canonicalF32Values() <-chan uint64 {
 		// 2. canonical NaN
 		ch <- canonicalNaNF32
 		// 3. all non-special values via xorshift32* (period 2^32-1, never produces 0)
-		x := benchmarks.XorShift32Star{State: rtcompare.NewCPRNG(16).Uint32() | 1}
+		x := benchmark.XorShift32Star{State: rtcompare.NewCPRNG(16).Uint32() | 1}
 		for i := uint64(0); i < (1<<32)-1; i++ {
 			u := x.Uint32()
 			if !isSpecialF32(u) {
