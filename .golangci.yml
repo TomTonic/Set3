@@ -3,8 +3,8 @@ version: "2"
 run:
   timeout: 3m
   skip-dirs:
-    - "^hashing/alternatives"
-    - "^hashing/benchmark"
+    - hashing/alternatives
+    - hashing/benchmark
 
 linters:
   default: none
