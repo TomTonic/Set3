@@ -54,6 +54,7 @@ type setRtcompareConfig struct {
 	refreshEvery   uint64
 	forever        bool
 	maxCycles      uint64
+	mode           string
 }
 
 func defaultSetRtcompareConfig() setRtcompareConfig {
@@ -64,6 +65,7 @@ func defaultSetRtcompareConfig() setRtcompareConfig {
 		refreshEvery:   envUint64("SET3_RTCOMPARE_REFRESH", 32),
 		forever:        envBool("SET3_RTCOMPARE_FOREVER", false),
 		maxCycles:      envUint64("SET3_RTCOMPARE_MAX_CYCLES", 0),
+		mode:           envString("SET3_RTCOMPARE_MODE", "full"),
 	}
 }
 
@@ -91,6 +93,14 @@ func envBool(key string, def bool) bool {
 	return v
 }
 
+func envString(key, def string) string {
+	raw := os.Getenv(key)
+	if raw == "" {
+		return def
+	}
+	return raw
+}
+
 // skipSetRtcompareIfCoverageEnabled avoids unreliable microbenchmark-like
 // comparisons under coverage instrumentation.
 func skipSetRtcompareIfCoverageEnabled(t *testing.T) {
@@ -116,6 +126,23 @@ func measureKernelSample(run func() uint64, totalOps uint64) (nsPerOp, allocByte
 	allocBytesPerOp = float64(after.TotalAlloc-before.TotalAlloc) / float64(totalOps)
 	mallocsPerOp = float64(after.Mallocs-before.Mallocs) / float64(totalOps)
 	return nsPerOp, allocBytesPerOp, mallocsPerOp, checksum
+}
+
+func strictlyPositiveMetric(v float64) float64 {
+	if v > 0 {
+		return v
+	}
+	return math.SmallestNonzeroFloat64
+}
+
+func safeRatio(numerator, denominator float64) float64 {
+	if denominator == 0 {
+		if numerator == 0 {
+			return 1.0
+		}
+		return math.Inf(1)
+	}
+	return numerator / denominator
 }
 
 func runSet3Workload[T comparable](keys, hits, misses []T) uint64 {
@@ -180,6 +207,84 @@ func runNativeMapWorkload[T comparable](keys, hits, misses []T) uint64 {
 
 	if hitCount != uint64(len(hits)) || missCount != 0 {
 		panic("native map workload invariant violated")
+	}
+	return hitCount ^ (missCount << 32) ^ uint64(len(m))
+}
+
+func runSet3BuildOnlyWorkload[T comparable](keys []T) uint64 {
+	s := EmptyWithCapacity[T](uint32(len(keys))) //nolint:gosec
+	for _, k := range keys {
+		s.Add(k)
+	}
+	if s.Size() != uint32(len(keys)) { //nolint:gosec
+		panic("set3 build-only workload invariant violated")
+	}
+	return uint64(s.Size())
+}
+
+func runNativeMapBuildOnlyWorkload[T comparable](keys []T) uint64 {
+	m := make(map[T]struct{}, len(keys))
+	for _, k := range keys {
+		m[k] = struct{}{}
+	}
+	if len(m) != len(keys) {
+		panic("native map build-only workload invariant violated")
+	}
+	return uint64(len(m))
+}
+
+func runSet3SteadyWorkload[T comparable](s *Set3[T], keys, hits, misses []T) uint64 {
+	var hitCount uint64
+	for _, k := range hits {
+		if s.Contains(k) {
+			hitCount++
+		}
+	}
+
+	var missCount uint64
+	for _, k := range misses {
+		if s.Contains(k) {
+			missCount++
+		}
+	}
+
+	for i := 0; i < len(keys); i += 2 {
+		s.Remove(keys[i])
+	}
+	for i := 0; i < len(keys); i += 2 {
+		s.Add(keys[i])
+	}
+
+	if hitCount != uint64(len(hits)) || missCount != 0 || s.Size() != uint32(len(keys)) { //nolint:gosec
+		panic("set3 steady workload invariant violated")
+	}
+	return hitCount ^ (missCount << 32) ^ uint64(s.Size())
+}
+
+func runNativeMapSteadyWorkload[T comparable](m map[T]struct{}, keys, hits, misses []T) uint64 {
+	var hitCount uint64
+	for _, k := range hits {
+		if _, ok := m[k]; ok {
+			hitCount++
+		}
+	}
+
+	var missCount uint64
+	for _, k := range misses {
+		if _, ok := m[k]; ok {
+			missCount++
+		}
+	}
+
+	for i := 0; i < len(keys); i += 2 {
+		delete(m, keys[i])
+	}
+	for i := 0; i < len(keys); i += 2 {
+		m[keys[i]] = struct{}{}
+	}
+
+	if hitCount != uint64(len(hits)) || missCount != 0 || len(m) != len(keys) {
+		panic("native map steady workload invariant violated")
 	}
 	return hitCount ^ (missCount << 32) ^ uint64(len(m))
 }
@@ -275,9 +380,9 @@ func reportInterim(
 	medMallocMap := rtcompare.Median(mallocMap)
 
 	fmt.Printf("\n[interim %s] pairs=%d\n", caseName, pairsDone)
-	fmt.Printf("  median time ns/op: set3=%.6f map=%.6f map/set3=%.6f\n", medSet, medMap, medMap/medSet)
-	fmt.Printf("  median alloc B/op: set3=%.6f map=%.6f map/set3=%.6f\n", medAllocSet, medAllocMap, medAllocMap/medAllocSet)
-	fmt.Printf("  median mallocs/op: set3=%.6f map=%.6f map/set3=%.6f\n", medMallocSet, medMallocMap, medMallocMap/medMallocSet)
+	fmt.Printf("  median time ns/op: set3=%.6f map=%.6f map/set3=%.6f\n", medSet, medMap, safeRatio(medMap, medSet))
+	fmt.Printf("  median alloc B/op: set3=%.6f map=%.6f map/set3=%.6f\n", medAllocSet, medAllocMap, safeRatio(medAllocMap, medAllocSet))
+	fmt.Printf("  median mallocs/op: set3=%.6f map=%.6f map/set3=%.6f\n", medMallocSet, medMallocMap, safeRatio(medMallocMap, medMallocSet))
 }
 
 func runSetVsMapRtcompare[T comparable](
@@ -290,7 +395,41 @@ func runSetVsMapRtcompare[T comparable](
 	if len(keys) == 0 || len(hits) == 0 || len(misses) == 0 {
 		t.Fatalf("%s: empty key/query slices are invalid", caseName)
 	}
-	totalOps := uint64(len(keys) + len(hits) + len(misses) + len(keys)/2 + len(keys)/2) //nolint:gosec
+
+	var modeName string
+	var totalOps uint64
+	var runSet func() uint64
+	var runMap func() uint64
+
+	switch cfg.mode {
+	case "full":
+		modeName = "full"
+		totalOps = uint64(len(keys) + len(hits) + len(misses) + len(keys)/2 + len(keys)/2) //nolint:gosec
+		runSet = func() uint64 { return runSet3Workload(keys, hits, misses) }
+		runMap = func() uint64 { return runNativeMapWorkload(keys, hits, misses) }
+	case "build", "build-only":
+		modeName = "build-only"
+		totalOps = uint64(len(keys)) //nolint:gosec
+		runSet = func() uint64 { return runSet3BuildOnlyWorkload(keys) }
+		runMap = func() uint64 { return runNativeMapBuildOnlyWorkload(keys) }
+	case "steady", "steady-state", "steady-state-only":
+		modeName = "steady-state-only"
+		totalOps = uint64(len(hits) + len(misses) + len(keys)/2 + len(keys)/2) //nolint:gosec
+
+		steadySet := EmptyWithCapacity[T](uint32(len(keys))) //nolint:gosec
+		for _, k := range keys {
+			steadySet.Add(k)
+		}
+		steadyMap := make(map[T]struct{}, len(keys))
+		for _, k := range keys {
+			steadyMap[k] = struct{}{}
+		}
+
+		runSet = func() uint64 { return runSet3SteadyWorkload(steadySet, keys, hits, misses) }
+		runMap = func() uint64 { return runNativeMapSteadyWorkload(steadyMap, keys, hits, misses) }
+	default:
+		t.Fatalf("%s: invalid SET3_RTCOMPARE_MODE=%q (allowed: full, build-only, steady-state-only)", caseName, cfg.mode)
+	}
 
 	timesSet3 := make([]float64, 0, cfg.repeats)
 	timesMap := make([]float64, 0, cfg.repeats)
@@ -316,37 +455,34 @@ func runSetVsMapRtcompare[T comparable](
 			if i%2 == 0 {
 				runtime.GC()
 				debug.SetGCPercent(-1)
-				setTime, setAlloc, setMallocs, checksumA = measureKernelSample(func() uint64 {
-					return runSet3Workload(keys, hits, misses)
-				}, totalOps)
+				setTime, setAlloc, setMallocs, checksumA = measureKernelSample(runSet, totalOps)
 				debug.SetGCPercent(gcval)
 
 				runtime.GC()
 				debug.SetGCPercent(-1)
-				mapTime, mapAlloc, mapMallocs, checksumB = measureKernelSample(func() uint64 {
-					return runNativeMapWorkload(keys, hits, misses)
-				}, totalOps)
+				mapTime, mapAlloc, mapMallocs, checksumB = measureKernelSample(runMap, totalOps)
 				debug.SetGCPercent(gcval)
 			} else {
 				runtime.GC()
 				debug.SetGCPercent(-1)
-				mapTime, mapAlloc, mapMallocs, checksumB = measureKernelSample(func() uint64 {
-					return runNativeMapWorkload(keys, hits, misses)
-				}, totalOps)
+				mapTime, mapAlloc, mapMallocs, checksumB = measureKernelSample(runMap, totalOps)
 				debug.SetGCPercent(gcval)
 
 				runtime.GC()
 				debug.SetGCPercent(-1)
-				setTime, setAlloc, setMallocs, checksumA = measureKernelSample(func() uint64 {
-					return runSet3Workload(keys, hits, misses)
-				}, totalOps)
+				setTime, setAlloc, setMallocs, checksumA = measureKernelSample(runSet, totalOps)
 				debug.SetGCPercent(gcval)
 			}
 
-			if setTime <= 0 || mapTime <= 0 || setAlloc <= 0 || mapAlloc <= 0 || setMallocs <= 0 || mapMallocs <= 0 {
+			if setTime <= 0 || mapTime <= 0 || setAlloc < 0 || mapAlloc < 0 || setMallocs < 0 || mapMallocs < 0 {
 				t.Fatalf("%s: invalid sample at pair %d: set(time=%g alloc=%g malloc=%g) map(time=%g alloc=%g malloc=%g)",
 					caseName, i, setTime, setAlloc, setMallocs, mapTime, mapAlloc, mapMallocs)
 			}
+
+			setAlloc = strictlyPositiveMetric(setAlloc)
+			mapAlloc = strictlyPositiveMetric(mapAlloc)
+			setMallocs = strictlyPositiveMetric(setMallocs)
+			mapMallocs = strictlyPositiveMetric(mapMallocs)
 
 			rtcompareSetSink ^= checksumA
 			rtcompareSetSink ^= checksumB
@@ -373,6 +509,8 @@ func runSetVsMapRtcompare[T comparable](
 		if cfg.maxCycles > 0 && cycle >= cfg.maxCycles {
 			break
 		}
+
+		fmt.Printf("\n[mode %s] continuing with another cycle for case=%s\n", modeName, caseName)
 	}
 }
 
@@ -593,6 +731,7 @@ func TestRtcompare_Set3_vs_NativeMap(t *testing.T) {
 
 	t.Logf("rtcompare set config: size=%d repeats=%d precision=%d refresh=%d forever=%v maxCycles=%d",
 		cfg.size, cfg.repeats, cfg.precisionLevel, cfg.refreshEvery, cfg.forever, cfg.maxCycles)
+	t.Logf("rtcompare set mode: %s (allowed: full, build-only, steady-state-only)", cfg.mode)
 
 	t.Run("uint64 primitive", func(t *testing.T) {
 		keys, hits, misses := generateUint64CaseData(cfg.size)
