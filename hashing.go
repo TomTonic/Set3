@@ -85,17 +85,9 @@ func MakeRuntimeHasher[K comparable](seed uint64) RuntimeHasher[K] {
 		if t.Kind() == reflect.Slice && t.Elem().Kind() == reflect.Uint8 {
 			// subtle difference: []byte (but with different declared element type) -> use slice handler
 			h.fn = hashByteSlice
-		} else if t.Kind() == reflect.Array && func() bool {
-			// switch über das Element-Kind: für alle int- / uint-Typen true zurückgeben
-			switch t.Elem().Kind() {
-			case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64,
-				reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
-				return true
-			default:
-				return false
-			}
-		}() {
-			// [N]byte, [N]uint16, etc. -> treat as raw bytes
+		} else if canUseUnsafeRawByteBlockHasherType(t).Eligible {
+			// Fast path for layouts that are safe for raw byte-block hashing
+			// according to Go equality semantics.
 			h.fn = hashAsByteArray[K]
 		} else {
 			// generic approach: use internal hash function from SwissMapType
