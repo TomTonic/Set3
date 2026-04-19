@@ -55,15 +55,21 @@ func HashByteSlice(p unsafe.Pointer, seed uint64) uint64 {
 	return HashBytesBlock(seed, b)
 }
 
-// HashAsByteArray handles fixed-size arrays (e.g. [N]byte) by viewing the
-// array memory as a []byte slice and reusing the byte-block hasher. It
-// works for N==0 as unsafe.Slice with length 0 is valid.
+// HashAsByteArray handles fixed-size raw-byte-eligible values (for example
+// [N]byte or structs with byte-stable equality semantics) by viewing their
+// memory as a []byte slice and hashing it directly. Hot fixed sizes are
+// dispatched to straight-line helpers; all other sizes fall back to the
+// generic byte-block hasher. It works for N==0 as unsafe.Slice with length 0
+// is valid.
 func HashAsByteArray[K comparable](p unsafe.Pointer, seed uint64) uint64 {
 	// Safely view the array memory as a byte slice using unsafe.Slice.
 	// The size in bytes of array type K equals the number of uint8 elements
 	// since element size is 1. Audited: size calculation is safe.
 	size := int(unsafe.Sizeof(*(*K)(p))) //nolint:gosec
-	b := unsafe.Slice((*byte)(p), size)  //nolint:gosec
+	if specialized := fixedSizeByteBlockHasher(size); specialized != nil {
+		return specialized(p, seed)
+	}
+	b := unsafe.Slice((*byte)(p), size) //nolint:gosec
 	return HashBytesBlock(seed, b)
 }
 

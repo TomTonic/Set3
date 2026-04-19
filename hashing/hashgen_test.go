@@ -92,6 +92,48 @@ type genOps8 struct {
 	H float64
 }
 
+type rawEligible12 struct {
+	A uint32
+	B uint32
+	C uint32
+}
+
+type rawEligible16 struct {
+	A uint64
+	B uint64
+}
+
+type rawEligible20 struct {
+	A uint32
+	B uint32
+	C uint32
+	D uint32
+	E uint32
+}
+
+type rawEligible24 struct {
+	A uint64
+	B uint64
+	C uint64
+}
+
+type rawEligible28 struct {
+	A uint32
+	B uint32
+	C uint32
+	D uint32
+	E uint32
+	F uint32
+	G uint32
+}
+
+type rawEligible32 struct {
+	A uint64
+	B uint64
+	C uint64
+	D uint64
+}
+
 type genEmptyStruct struct{}
 
 // buildLoopClosureFromOpsBaseline mirrors the old generic N-op path so tests
@@ -108,6 +150,14 @@ func buildLoopClosureFromOpsBaseline(ops []microOp) HashFunction {
 		}
 		return h
 	}
+}
+
+// hashAsByteArrayGeneric mirrors the old HashAsByteArray implementation for
+// A/B correctness and benchmark comparisons with the specialized path.
+func hashAsByteArrayGeneric[K comparable](p unsafe.Pointer, seed uint64) uint64 {
+	size := int(unsafe.Sizeof(*(*K)(p))) //nolint:gosec
+	b := unsafe.Slice((*byte)(p), size)  //nolint:gosec
+	return HashBytesBlock(seed, b)
 }
 
 // mustMergedOpsForStruct flattens a struct type and returns its merged op list.
@@ -503,7 +553,9 @@ func TestHashFixedByteBlocksMatchHashBytesBlock(t *testing.T) {
 	}{
 		{name: "12", size: 12, fn: hashByteBlock12},
 		{name: "16", size: 16, fn: hashByteBlock16},
+		{name: "20", size: 20, fn: hashByteBlock20},
 		{name: "24", size: 24, fn: hashByteBlock24},
+		{name: "28", size: 28, fn: hashByteBlock28},
 		{name: "32", size: 32, fn: hashByteBlock32},
 	}
 
@@ -517,6 +569,41 @@ func TestHashFixedByteBlocksMatchHashBytesBlock(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestHashAsByteArray_SpecializedRawEligibleSizesMatchGeneric verifies that
+// the raw-byte fast path outside the generator produces the same result as
+// the old generic byte-slice hashing path for hot fixed sizes.
+func TestHashAsByteArray_SpecializedRawEligibleSizesMatchGeneric(t *testing.T) {
+	seed := uint64(0xA55AA55AA55AA55A)
+
+	assertMatches := func(t *testing.T, label string, typ reflect.Type, got, want uint64) {
+		t.Helper()
+		if !CanUseUnsafeRawByteBlockHasherType(typ).Eligible {
+			t.Fatalf("type %s is unexpectedly not raw-byte-eligible", label)
+		}
+		if got != want {
+			t.Fatalf("hash mismatch for %s: got %#x want %#x", label, got, want)
+		}
+	}
+
+	v12 := rawEligible12{A: 1, B: 2, C: 3}
+	assertMatches(t, "rawEligible12", reflect.TypeOf(v12), HashAsByteArray[rawEligible12](unsafe.Pointer(&v12), seed), hashAsByteArrayGeneric[rawEligible12](unsafe.Pointer(&v12), seed))
+
+	v16 := rawEligible16{A: 1, B: 2}
+	assertMatches(t, "rawEligible16", reflect.TypeOf(v16), HashAsByteArray[rawEligible16](unsafe.Pointer(&v16), seed), hashAsByteArrayGeneric[rawEligible16](unsafe.Pointer(&v16), seed))
+
+	v20 := rawEligible20{A: 1, B: 2, C: 3, D: 4, E: 5}
+	assertMatches(t, "rawEligible20", reflect.TypeOf(v20), HashAsByteArray[rawEligible20](unsafe.Pointer(&v20), seed), hashAsByteArrayGeneric[rawEligible20](unsafe.Pointer(&v20), seed))
+
+	v24 := rawEligible24{A: 1, B: 2, C: 3}
+	assertMatches(t, "rawEligible24", reflect.TypeOf(v24), HashAsByteArray[rawEligible24](unsafe.Pointer(&v24), seed), hashAsByteArrayGeneric[rawEligible24](unsafe.Pointer(&v24), seed))
+
+	v28 := rawEligible28{A: 1, B: 2, C: 3, D: 4, E: 5, F: 6, G: 7}
+	assertMatches(t, "rawEligible28", reflect.TypeOf(v28), HashAsByteArray[rawEligible28](unsafe.Pointer(&v28), seed), hashAsByteArrayGeneric[rawEligible28](unsafe.Pointer(&v28), seed))
+
+	v32 := rawEligible32{A: 1, B: 2, C: 3, D: 4}
+	assertMatches(t, "rawEligible32", reflect.TypeOf(v32), HashAsByteArray[rawEligible32](unsafe.Pointer(&v32), seed), hashAsByteArrayGeneric[rawEligible32](unsafe.Pointer(&v32), seed))
 }
 
 // ── TestGenerateHashFunction_IntegrationWithMakeRuntimeHasher verifies

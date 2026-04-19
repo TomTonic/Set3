@@ -24,7 +24,7 @@ var generatedHashCache sync.Map // map[reflect.Type]HashFunction
 //   - Contiguous runs of raw-byte-eligible fields are merged into single
 //     HashBytesBlock calls, maximizing cache locality and minimizing call
 //     overhead.
-//   - Fixed byte-block sizes (12, 16, 24, 32 bytes) use dedicated
+//   - Fixed byte-block sizes (12, 16, 20, 24, 28, 32 bytes) use dedicated
 //     straight-line hashers instead of the generic block loop.
 //   - Special fields (float32, float64, complex64, complex128, string) are
 //     handled with canonicalization logic.
@@ -247,18 +247,14 @@ func microOpToFieldOp(op microOp) fieldOp {
 			fn = HashI32WHdet
 		case 8:
 			fn = HashI64WHdet
-		case 12:
-			fn = hashByteBlock12
-		case 16:
-			fn = hashByteBlock16
-		case 24:
-			fn = hashByteBlock24
-		case 32:
-			fn = hashByteBlock32
 		default:
-			fn = func(p unsafe.Pointer, seed uint64) uint64 {
-				b := unsafe.Slice((*byte)(p), size) //nolint:gosec
-				return HashBytesBlock(seed, b)
+			if specialized := fixedSizeByteBlockHasher(size); specialized != nil {
+				fn = specialized
+			} else {
+				fn = func(p unsafe.Pointer, seed uint64) uint64 {
+					b := unsafe.Slice((*byte)(p), size) //nolint:gosec
+					return HashBytesBlock(seed, b)
+				}
 			}
 		}
 		return fieldOp{fn: fn, offset: op.offset}
@@ -311,20 +307,12 @@ func buildArrayHasher(t reflect.Type) HashFunction {
 
 	if CanUseUnsafeRawByteBlockHasherType(t).Eligible {
 		totalSize := int(t.Size())
-		switch totalSize {
-		case 12:
-			return hashByteBlock12
-		case 16:
-			return hashByteBlock16
-		case 24:
-			return hashByteBlock24
-		case 32:
-			return hashByteBlock32
-		default:
-			return func(p unsafe.Pointer, seed uint64) uint64 {
-				b := unsafe.Slice((*byte)(p), totalSize) //nolint:gosec
-				return HashBytesBlock(seed, b)
-			}
+		if specialized := fixedSizeByteBlockHasher(totalSize); specialized != nil {
+			return specialized
+		}
+		return func(p unsafe.Pointer, seed uint64) uint64 {
+			b := unsafe.Slice((*byte)(p), totalSize) //nolint:gosec
+			return HashBytesBlock(seed, b)
 		}
 	}
 
@@ -474,6 +462,27 @@ func buildClosureFromOps(ops []microOp) HashFunction {
 
 // ── Fixed byte-block hash helpers ──────────────────────────────────────────
 
+// fixedSizeByteBlockHasher returns a specialized straight-line hasher for hot
+// fixed byte-block sizes, or nil when the generic block hasher should be used.
+func fixedSizeByteBlockHasher(size int) HashFunction {
+	switch size {
+	case 12:
+		return hashByteBlock12
+	case 16:
+		return hashByteBlock16
+	case 20:
+		return hashByteBlock20
+	case 24:
+		return hashByteBlock24
+	case 28:
+		return hashByteBlock28
+	case 32:
+		return hashByteBlock32
+	default:
+		return nil
+	}
+}
+
 // hashByteBlock12 avoids the generic block loop for the common 12-byte case.
 func hashByteBlock12(p unsafe.Pointer, seed uint64) uint64 {
 	b := unsafe.Slice((*byte)(p), 12) //nolint:gosec
@@ -494,6 +503,17 @@ func hashByteBlock16(p unsafe.Pointer, seed uint64) uint64 {
 	return WH64Det(uint64(P1)^lengthMix, h)
 }
 
+// hashByteBlock20 avoids the generic block loop for the common 20-byte case.
+func hashByteBlock20(p unsafe.Pointer, seed uint64) uint64 {
+	b := unsafe.Slice((*byte)(p), 20) //nolint:gosec
+	h := seed ^ P0
+	h = WH64Det(binary.NativeEndian.Uint64(b[:8]), h)
+	h = WH64Det(binary.NativeEndian.Uint64(b[8:16]), h)
+	tail := uint64(binary.NativeEndian.Uint32(b[16:20]))
+	lengthMix := uint64(len(b)) * uint64(P2)
+	return WH64Det(tail^lengthMix, h)
+}
+
 // hashByteBlock24 avoids the generic block loop for the common 24-byte case.
 func hashByteBlock24(p unsafe.Pointer, seed uint64) uint64 {
 	b := unsafe.Slice((*byte)(p), 24) //nolint:gosec
@@ -503,6 +523,18 @@ func hashByteBlock24(p unsafe.Pointer, seed uint64) uint64 {
 	h = WH64Det(binary.NativeEndian.Uint64(b[16:24]), h)
 	lengthMix := uint64(len(b)) * uint64(P2)
 	return WH64Det(uint64(P1)^lengthMix, h)
+}
+
+// hashByteBlock28 avoids the generic block loop for the common 28-byte case.
+func hashByteBlock28(p unsafe.Pointer, seed uint64) uint64 {
+	b := unsafe.Slice((*byte)(p), 28) //nolint:gosec
+	h := seed ^ P0
+	h = WH64Det(binary.NativeEndian.Uint64(b[:8]), h)
+	h = WH64Det(binary.NativeEndian.Uint64(b[8:16]), h)
+	h = WH64Det(binary.NativeEndian.Uint64(b[16:24]), h)
+	tail := uint64(binary.NativeEndian.Uint32(b[24:28]))
+	lengthMix := uint64(len(b)) * uint64(P2)
+	return WH64Det(tail^lengthMix, h)
 }
 
 // hashByteBlock32 avoids the generic block loop for the common 32-byte case.

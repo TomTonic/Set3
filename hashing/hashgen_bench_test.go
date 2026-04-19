@@ -56,6 +56,12 @@ type benchOps5 = genOps5
 type benchOps6 = genOps6
 type benchOps7 = genOps7
 type benchOps8 = genOps8
+type benchRaw12 = rawEligible12
+type benchRaw16 = rawEligible16
+type benchRaw20 = rawEligible20
+type benchRaw24 = rawEligible24
+type benchRaw28 = rawEligible28
+type benchRaw32 = rawEligible32
 
 func benchmarkHashFunctionDirect(b *testing.B, fn HashFunction, p unsafe.Pointer, seed uint64) {
 	b.Helper()
@@ -103,6 +109,18 @@ func benchmarkFixedBlockVsGeneric(b *testing.B, size int, specialized HashFuncti
 	})
 	b.Run("generic", func(b *testing.B) {
 		benchmarkHashFunctionDirect(b, generic, p, seed)
+	})
+}
+
+func benchmarkHashAsByteArrayVsGeneric[K comparable](b *testing.B, value *K) {
+	b.Helper()
+	seed := uint64(0x1234)
+	p := unsafe.Pointer(value)
+	b.Run("specialized", func(b *testing.B) {
+		benchmarkHashFunctionDirect(b, HashAsByteArray[K], p, seed)
+	})
+	b.Run("generic", func(b *testing.B) {
+		benchmarkHashFunctionDirect(b, hashAsByteArrayGeneric[K], p, seed)
 	})
 }
 
@@ -292,14 +310,68 @@ func BenchmarkHashGen_FixedBlock16(b *testing.B) {
 	benchmarkFixedBlockVsGeneric(b, 16, hashByteBlock16)
 }
 
+// BenchmarkHashGen_FixedBlock20 compares the dedicated 20-byte helper with
+// the generic HashBytesBlock path.
+func BenchmarkHashGen_FixedBlock20(b *testing.B) {
+	benchmarkFixedBlockVsGeneric(b, 20, hashByteBlock20)
+}
+
 // BenchmarkHashGen_FixedBlock24 compares the dedicated 24-byte helper with
 // the generic HashBytesBlock path.
 func BenchmarkHashGen_FixedBlock24(b *testing.B) {
 	benchmarkFixedBlockVsGeneric(b, 24, hashByteBlock24)
 }
 
+// BenchmarkHashGen_FixedBlock28 compares the dedicated 28-byte helper with
+// the generic HashBytesBlock path.
+func BenchmarkHashGen_FixedBlock28(b *testing.B) {
+	benchmarkFixedBlockVsGeneric(b, 28, hashByteBlock28)
+}
+
 // BenchmarkHashGen_FixedBlock32 compares the dedicated 32-byte helper with
 // the generic HashBytesBlock path.
 func BenchmarkHashGen_FixedBlock32(b *testing.B) {
 	benchmarkFixedBlockVsGeneric(b, 32, hashByteBlock32)
+}
+
+// BenchmarkHashAsByteArray_Raw12 compares the specialized raw-byte fast path
+// against the old generic HashAsByteArray implementation for 12-byte values.
+func BenchmarkHashAsByteArray_Raw12(b *testing.B) {
+	v := &benchRaw12{A: 1, B: 2, C: 3}
+	benchmarkHashAsByteArrayVsGeneric(b, v)
+}
+
+// BenchmarkHashAsByteArray_Raw16 compares the specialized raw-byte fast path
+// against the old generic HashAsByteArray implementation for 16-byte values.
+func BenchmarkHashAsByteArray_Raw16(b *testing.B) {
+	v := &benchRaw16{A: 1, B: 2}
+	benchmarkHashAsByteArrayVsGeneric(b, v)
+}
+
+// BenchmarkHashAsByteArray_Raw20 compares the specialized raw-byte fast path
+// against the old generic HashAsByteArray implementation for 20-byte values.
+func BenchmarkHashAsByteArray_Raw20(b *testing.B) {
+	v := &benchRaw20{A: 1, B: 2, C: 3, D: 4, E: 5}
+	benchmarkHashAsByteArrayVsGeneric(b, v)
+}
+
+// BenchmarkHashAsByteArray_Raw24 compares the specialized raw-byte fast path
+// against the old generic HashAsByteArray implementation for 24-byte values.
+func BenchmarkHashAsByteArray_Raw24(b *testing.B) {
+	v := &benchRaw24{A: 1, B: 2, C: 3}
+	benchmarkHashAsByteArrayVsGeneric(b, v)
+}
+
+// BenchmarkHashAsByteArray_Raw28 compares the specialized raw-byte fast path
+// against the old generic HashAsByteArray implementation for 28-byte values.
+func BenchmarkHashAsByteArray_Raw28(b *testing.B) {
+	v := &benchRaw28{A: 1, B: 2, C: 3, D: 4, E: 5, F: 6, G: 7}
+	benchmarkHashAsByteArrayVsGeneric(b, v)
+}
+
+// BenchmarkHashAsByteArray_Raw32 compares the specialized raw-byte fast path
+// against the old generic HashAsByteArray implementation for 32-byte values.
+func BenchmarkHashAsByteArray_Raw32(b *testing.B) {
+	v := &benchRaw32{A: 1, B: 2, C: 3, D: 4}
+	benchmarkHashAsByteArrayVsGeneric(b, v)
 }
