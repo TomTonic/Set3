@@ -2,6 +2,7 @@
 package hashing
 
 import (
+	"reflect"
 	"testing"
 	"unsafe"
 )
@@ -49,6 +50,61 @@ type benchLargeStruct struct {
 
 // sink prevents dead-code elimination.
 var benchSink uint64
+
+type benchOps4 = genOps4
+type benchOps5 = genOps5
+type benchOps6 = genOps6
+type benchOps7 = genOps7
+type benchOps8 = genOps8
+
+func benchmarkHashFunctionDirect(b *testing.B, fn HashFunction, p unsafe.Pointer, seed uint64) {
+	b.Helper()
+	b.ResetTimer()
+	for range b.N {
+		benchSink = fn(p, seed)
+	}
+}
+
+func mustBuildMergedOpsBenchmark(b *testing.B, sample any) []microOp {
+	b.Helper()
+	ops := flattenStructOps(reflect.TypeOf(sample), 0)
+	if ops == nil {
+		b.Fatalf("flattenStructOps returned nil for %T", sample)
+	}
+	return mergeByteBlocks(ops)
+}
+
+func benchmarkUnrolledVsLoop(b *testing.B, sample any, valuePtr unsafe.Pointer) {
+	b.Helper()
+	ops := mustBuildMergedOpsBenchmark(b, sample)
+	seed := uint64(0x1234)
+	b.Run("unrolled", func(b *testing.B) {
+		benchmarkHashFunctionDirect(b, buildClosureFromOps(ops), valuePtr, seed)
+	})
+	b.Run("loop-baseline", func(b *testing.B) {
+		benchmarkHashFunctionDirect(b, buildLoopClosureFromOpsBaseline(ops), valuePtr, seed)
+	})
+}
+
+func benchmarkFixedBlockVsGeneric(b *testing.B, size int, specialized HashFunction) {
+	b.Helper()
+	seed := uint64(0x1234)
+	var block [32]byte
+	for i := range block {
+		block[i] = byte(i*29 + 7)
+	}
+	p := unsafe.Pointer(&block[0])
+	generic := func(p unsafe.Pointer, seed uint64) uint64 {
+		b := unsafe.Slice((*byte)(p), size) //nolint:gosec
+		return HashBytesBlock(seed, b)
+	}
+	b.Run("specialized", func(b *testing.B) {
+		benchmarkHashFunctionDirect(b, specialized, p, seed)
+	})
+	b.Run("generic", func(b *testing.B) {
+		benchmarkHashFunctionDirect(b, generic, p, seed)
+	})
+}
 
 // ── Benchmarks ──────────────────────────────────────────────────────────────
 
@@ -187,4 +243,63 @@ func BenchmarkHashGen_Direct_FloatStruct(b *testing.B) {
 		p := unsafe.Pointer(&v)
 		benchSink = h.fn(p, seed)
 	}
+}
+
+// BenchmarkHashGen_Unrolled4Ops compares the new 4-op unrolled closure with
+// the old loop-based closure shape.
+func BenchmarkHashGen_Unrolled4Ops(b *testing.B) {
+	v := &benchOps4{A: 1, B: 2.5, C: 3, D: 4.5}
+	benchmarkUnrolledVsLoop(b, benchOps4{}, unsafe.Pointer(v))
+}
+
+// BenchmarkHashGen_Unrolled5Ops compares the new 5-op unrolled closure with
+// the old loop-based closure shape.
+func BenchmarkHashGen_Unrolled5Ops(b *testing.B) {
+	v := &benchOps5{A: 1, B: 2.5, C: 3, D: 4.5, E: 5}
+	benchmarkUnrolledVsLoop(b, benchOps5{}, unsafe.Pointer(v))
+}
+
+// BenchmarkHashGen_Unrolled6Ops compares the new 6-op unrolled closure with
+// the old loop-based closure shape.
+func BenchmarkHashGen_Unrolled6Ops(b *testing.B) {
+	v := &benchOps6{A: 1, B: 2.5, C: 3, D: 4.5, E: 5, F: 6.5}
+	benchmarkUnrolledVsLoop(b, benchOps6{}, unsafe.Pointer(v))
+}
+
+// BenchmarkHashGen_Unrolled7Ops compares the new 7-op unrolled closure with
+// the old loop-based closure shape.
+func BenchmarkHashGen_Unrolled7Ops(b *testing.B) {
+	v := &benchOps7{A: 1, B: 2.5, C: 3, D: 4.5, E: 5, F: 6.5, G: 7}
+	benchmarkUnrolledVsLoop(b, benchOps7{}, unsafe.Pointer(v))
+}
+
+// BenchmarkHashGen_Unrolled8Ops compares the new 8-op unrolled closure with
+// the old loop-based closure shape.
+func BenchmarkHashGen_Unrolled8Ops(b *testing.B) {
+	v := &benchOps8{A: 1, B: 2.5, C: 3, D: 4.5, E: 5, F: 6.5, G: 7, H: 8.5}
+	benchmarkUnrolledVsLoop(b, benchOps8{}, unsafe.Pointer(v))
+}
+
+// BenchmarkHashGen_FixedBlock12 compares the dedicated 12-byte helper with
+// the generic HashBytesBlock path.
+func BenchmarkHashGen_FixedBlock12(b *testing.B) {
+	benchmarkFixedBlockVsGeneric(b, 12, hashByteBlock12)
+}
+
+// BenchmarkHashGen_FixedBlock16 compares the dedicated 16-byte helper with
+// the generic HashBytesBlock path.
+func BenchmarkHashGen_FixedBlock16(b *testing.B) {
+	benchmarkFixedBlockVsGeneric(b, 16, hashByteBlock16)
+}
+
+// BenchmarkHashGen_FixedBlock24 compares the dedicated 24-byte helper with
+// the generic HashBytesBlock path.
+func BenchmarkHashGen_FixedBlock24(b *testing.B) {
+	benchmarkFixedBlockVsGeneric(b, 24, hashByteBlock24)
+}
+
+// BenchmarkHashGen_FixedBlock32 compares the dedicated 32-byte helper with
+// the generic HashBytesBlock path.
+func BenchmarkHashGen_FixedBlock32(b *testing.B) {
+	benchmarkFixedBlockVsGeneric(b, 32, hashByteBlock32)
 }

@@ -47,7 +47,78 @@ type genMixed struct {
 	D complex64
 }
 
+type genOps4 struct {
+	A uint64
+	B float64
+	C uint64
+	D float64
+}
+
+type genOps5 struct {
+	A uint64
+	B float64
+	C uint64
+	D float64
+	E uint64
+}
+
+type genOps6 struct {
+	A uint64
+	B float64
+	C uint64
+	D float64
+	E uint64
+	F float64
+}
+
+type genOps7 struct {
+	A uint64
+	B float64
+	C uint64
+	D float64
+	E uint64
+	F float64
+	G uint64
+}
+
+type genOps8 struct {
+	A uint64
+	B float64
+	C uint64
+	D float64
+	E uint64
+	F float64
+	G uint64
+	H float64
+}
+
 type genEmptyStruct struct{}
+
+// buildLoopClosureFromOpsBaseline mirrors the old generic N-op path so tests
+// and benchmarks can compare specialized closures against the loop baseline.
+func buildLoopClosureFromOpsBaseline(ops []microOp) HashFunction {
+	frozen := make([]fieldOp, len(ops))
+	for i, op := range ops {
+		frozen[i] = microOpToFieldOp(op)
+	}
+	return func(p unsafe.Pointer, seed uint64) uint64 {
+		h := seed
+		for _, fop := range frozen {
+			h = fop.fn(unsafe.Add(p, fop.offset), h) //nolint:gosec
+		}
+		return h
+	}
+}
+
+// mustMergedOpsForStruct flattens a struct type and returns its merged op list.
+func mustMergedOpsForStruct(t *testing.T, sample any) []microOp {
+	t.Helper()
+	ops := flattenStructOps(reflect.TypeOf(sample), 0)
+	if ops == nil {
+		t.Fatalf("flattenStructOps returned nil for %T", sample)
+	}
+	return mergeByteBlocks(ops)
+}
 
 // ── TestGenerateHashFunction_Scalars verifies that the generator handles
 // scalar types that require canonicalization (floats, complex) and
@@ -338,6 +409,113 @@ func TestGenerateHashFunction_Caching(t *testing.T) {
 	v := genPaddingStruct{A: 42, B: 999}
 	if fn1(unsafe.Pointer(&v), seed) != fn2(unsafe.Pointer(&v), seed) {
 		t.Fatalf("cached functions produce different results")
+	}
+}
+
+// TestBuildClosureFromOps_UnrolledFourToEightMatchesLoopBaseline verifies
+// that the hand-unrolled 4–8 op closures produce exactly the same hashes as
+// the generic loop path they replace.
+func TestBuildClosureFromOps_UnrolledFourToEightMatchesLoopBaseline(t *testing.T) {
+	tests := []struct {
+		name    string
+		sample  any
+		wantOps int
+		ptr     func() unsafe.Pointer
+	}{
+		{
+			name:    "4 ops",
+			sample:  genOps4{},
+			wantOps: 4,
+			ptr: func() unsafe.Pointer {
+				v := &genOps4{A: 1, B: 2.5, C: 3, D: 4.5}
+				return unsafe.Pointer(v)
+			},
+		},
+		{
+			name:    "5 ops",
+			sample:  genOps5{},
+			wantOps: 5,
+			ptr: func() unsafe.Pointer {
+				v := &genOps5{A: 1, B: 2.5, C: 3, D: 4.5, E: 5}
+				return unsafe.Pointer(v)
+			},
+		},
+		{
+			name:    "6 ops",
+			sample:  genOps6{},
+			wantOps: 6,
+			ptr: func() unsafe.Pointer {
+				v := &genOps6{A: 1, B: 2.5, C: 3, D: 4.5, E: 5, F: 6.5}
+				return unsafe.Pointer(v)
+			},
+		},
+		{
+			name:    "7 ops",
+			sample:  genOps7{},
+			wantOps: 7,
+			ptr: func() unsafe.Pointer {
+				v := &genOps7{A: 1, B: 2.5, C: 3, D: 4.5, E: 5, F: 6.5, G: 7}
+				return unsafe.Pointer(v)
+			},
+		},
+		{
+			name:    "8 ops",
+			sample:  genOps8{},
+			wantOps: 8,
+			ptr: func() unsafe.Pointer {
+				v := &genOps8{A: 1, B: 2.5, C: 3, D: 4.5, E: 5, F: 6.5, G: 7, H: 8.5}
+				return unsafe.Pointer(v)
+			},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			ops := mustMergedOpsForStruct(t, tc.sample)
+			if len(ops) != tc.wantOps {
+				t.Fatalf("got %d ops, want %d", len(ops), tc.wantOps)
+			}
+
+			gotFn := buildClosureFromOps(ops)
+			loopFn := buildLoopClosureFromOpsBaseline(ops)
+			seed := uint64(0xC0FFEE)
+			p := tc.ptr()
+
+			if got := gotFn(p, seed); got != loopFn(p, seed) {
+				t.Fatalf("hash mismatch: got %#x want %#x", got, loopFn(p, seed))
+			}
+		})
+	}
+}
+
+// TestHashFixedByteBlocksMatchHashBytesBlock verifies that the specialized
+// fixed-size byte-block helpers preserve the generic HashBytesBlock result.
+func TestHashFixedByteBlocksMatchHashBytesBlock(t *testing.T) {
+	var block [32]byte
+	for i := range block {
+		block[i] = byte(i*17 + 3)
+	}
+
+	tests := []struct {
+		name string
+		size int
+		fn   HashFunction
+	}{
+		{name: "12", size: 12, fn: hashByteBlock12},
+		{name: "16", size: 16, fn: hashByteBlock16},
+		{name: "24", size: 24, fn: hashByteBlock24},
+		{name: "32", size: 32, fn: hashByteBlock32},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			seed := uint64(0x1234567890ABCDEF)
+			want := HashBytesBlock(seed, block[:tc.size])
+			got := tc.fn(unsafe.Pointer(&block[0]), seed)
+			if got != want {
+				t.Fatalf("hash mismatch for size %d: got %#x want %#x", tc.size, got, want)
+			}
+		})
 	}
 }
 

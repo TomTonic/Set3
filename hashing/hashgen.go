@@ -2,6 +2,7 @@
 package hashing
 
 import (
+	"encoding/binary"
 	"math"
 	"reflect"
 	"sync"
@@ -23,9 +24,11 @@ var generatedHashCache sync.Map // map[reflect.Type]HashFunction
 //   - Contiguous runs of raw-byte-eligible fields are merged into single
 //     HashBytesBlock calls, maximizing cache locality and minimizing call
 //     overhead.
+//   - Fixed byte-block sizes (12, 16, 24, 32 bytes) use dedicated
+//     straight-line hashers instead of the generic block loop.
 //   - Special fields (float32, float64, complex64, complex128, string) are
 //     handled with canonicalization logic.
-//   - Small op counts (1–3) produce dedicated closures with captured
+//   - Small op counts (1–8) produce dedicated closures with captured
 //     function pointers that Go can inline.
 //   - The general N-op path uses an array of (HashFunction, offset) pairs
 //     with byte-block merging to minimize the number of calls.
@@ -228,9 +231,8 @@ func mergeByteBlocks(ops []microOp) []microOp {
 // ── Convert micro-ops to fieldOps ───────────────────────────────────────────
 
 // microOpToFieldOp converts a micro-op into a fieldOp with a concrete
-// HashFunction. For byte blocks of known small sizes (1, 2, 4, 8 bytes),
-// specialized scalar hashers are used instead of HashBytesBlock to enable
-// inlining and avoid the slice overhead.
+// HashFunction. Hot byte-block sizes are routed to specialized helpers to
+// avoid the generic HashBytesBlock loop and tail dispatch.
 func microOpToFieldOp(op microOp) fieldOp {
 	switch op.kind {
 	case opByteBlock:
@@ -245,6 +247,14 @@ func microOpToFieldOp(op microOp) fieldOp {
 			fn = HashI32WHdet
 		case 8:
 			fn = HashI64WHdet
+		case 12:
+			fn = hashByteBlock12
+		case 16:
+			fn = hashByteBlock16
+		case 24:
+			fn = hashByteBlock24
+		case 32:
+			fn = hashByteBlock32
 		default:
 			fn = func(p unsafe.Pointer, seed uint64) uint64 {
 				b := unsafe.Slice((*byte)(p), size) //nolint:gosec
@@ -301,9 +311,20 @@ func buildArrayHasher(t reflect.Type) HashFunction {
 
 	if CanUseUnsafeRawByteBlockHasherType(t).Eligible {
 		totalSize := int(t.Size())
-		return func(p unsafe.Pointer, seed uint64) uint64 {
-			b := unsafe.Slice((*byte)(p), totalSize) //nolint:gosec
-			return HashBytesBlock(seed, b)
+		switch totalSize {
+		case 12:
+			return hashByteBlock12
+		case 16:
+			return hashByteBlock16
+		case 24:
+			return hashByteBlock24
+		case 32:
+			return hashByteBlock32
+		default:
+			return func(p unsafe.Pointer, seed uint64) uint64 {
+				b := unsafe.Slice((*byte)(p), totalSize) //nolint:gosec
+				return HashBytesBlock(seed, b)
+			}
 		}
 	}
 
@@ -323,7 +344,7 @@ func buildArrayHasher(t reflect.Type) HashFunction {
 // ── Closure construction ────────────────────────────────────────────────────
 
 // buildClosureFromOps creates a single HashFunction closure from micro-ops.
-// For 1–3 ops, fully unrolled closures with captured function pointers are
+// For 1–8 ops, fully unrolled closures with captured function pointers are
 // emitted so that Go can inline the inner calls. For larger counts, a tight
 // loop over a frozen fieldOp slice is used.
 func buildClosureFromOps(ops []microOp) HashFunction {
@@ -356,6 +377,86 @@ func buildClosureFromOps(ops []microOp) HashFunction {
 			h = fn1(unsafe.Add(p, off1), h)     //nolint:gosec
 			return fn2(unsafe.Add(p, off2), h)  //nolint:gosec
 		}
+	case 4:
+		fop0, fop1, fop2, fop3 := microOpToFieldOp(ops[0]), microOpToFieldOp(ops[1]), microOpToFieldOp(ops[2]), microOpToFieldOp(ops[3])
+		fn0, off0 := fop0.fn, fop0.offset
+		fn1, off1 := fop1.fn, fop1.offset
+		fn2, off2 := fop2.fn, fop2.offset
+		fn3, off3 := fop3.fn, fop3.offset
+		return func(p unsafe.Pointer, seed uint64) uint64 {
+			h := fn0(unsafe.Add(p, off0), seed) //nolint:gosec
+			h = fn1(unsafe.Add(p, off1), h)     //nolint:gosec
+			h = fn2(unsafe.Add(p, off2), h)     //nolint:gosec
+			return fn3(unsafe.Add(p, off3), h)  //nolint:gosec
+		}
+	case 5:
+		fop0, fop1, fop2, fop3, fop4 := microOpToFieldOp(ops[0]), microOpToFieldOp(ops[1]), microOpToFieldOp(ops[2]), microOpToFieldOp(ops[3]), microOpToFieldOp(ops[4])
+		fn0, off0 := fop0.fn, fop0.offset
+		fn1, off1 := fop1.fn, fop1.offset
+		fn2, off2 := fop2.fn, fop2.offset
+		fn3, off3 := fop3.fn, fop3.offset
+		fn4, off4 := fop4.fn, fop4.offset
+		return func(p unsafe.Pointer, seed uint64) uint64 {
+			h := fn0(unsafe.Add(p, off0), seed) //nolint:gosec
+			h = fn1(unsafe.Add(p, off1), h)     //nolint:gosec
+			h = fn2(unsafe.Add(p, off2), h)     //nolint:gosec
+			h = fn3(unsafe.Add(p, off3), h)     //nolint:gosec
+			return fn4(unsafe.Add(p, off4), h)  //nolint:gosec
+		}
+	case 6:
+		fop0, fop1, fop2, fop3, fop4, fop5 := microOpToFieldOp(ops[0]), microOpToFieldOp(ops[1]), microOpToFieldOp(ops[2]), microOpToFieldOp(ops[3]), microOpToFieldOp(ops[4]), microOpToFieldOp(ops[5])
+		fn0, off0 := fop0.fn, fop0.offset
+		fn1, off1 := fop1.fn, fop1.offset
+		fn2, off2 := fop2.fn, fop2.offset
+		fn3, off3 := fop3.fn, fop3.offset
+		fn4, off4 := fop4.fn, fop4.offset
+		fn5, off5 := fop5.fn, fop5.offset
+		return func(p unsafe.Pointer, seed uint64) uint64 {
+			h := fn0(unsafe.Add(p, off0), seed) //nolint:gosec
+			h = fn1(unsafe.Add(p, off1), h)     //nolint:gosec
+			h = fn2(unsafe.Add(p, off2), h)     //nolint:gosec
+			h = fn3(unsafe.Add(p, off3), h)     //nolint:gosec
+			h = fn4(unsafe.Add(p, off4), h)     //nolint:gosec
+			return fn5(unsafe.Add(p, off5), h)  //nolint:gosec
+		}
+	case 7:
+		fop0, fop1, fop2, fop3, fop4, fop5, fop6 := microOpToFieldOp(ops[0]), microOpToFieldOp(ops[1]), microOpToFieldOp(ops[2]), microOpToFieldOp(ops[3]), microOpToFieldOp(ops[4]), microOpToFieldOp(ops[5]), microOpToFieldOp(ops[6])
+		fn0, off0 := fop0.fn, fop0.offset
+		fn1, off1 := fop1.fn, fop1.offset
+		fn2, off2 := fop2.fn, fop2.offset
+		fn3, off3 := fop3.fn, fop3.offset
+		fn4, off4 := fop4.fn, fop4.offset
+		fn5, off5 := fop5.fn, fop5.offset
+		fn6, off6 := fop6.fn, fop6.offset
+		return func(p unsafe.Pointer, seed uint64) uint64 {
+			h := fn0(unsafe.Add(p, off0), seed) //nolint:gosec
+			h = fn1(unsafe.Add(p, off1), h)     //nolint:gosec
+			h = fn2(unsafe.Add(p, off2), h)     //nolint:gosec
+			h = fn3(unsafe.Add(p, off3), h)     //nolint:gosec
+			h = fn4(unsafe.Add(p, off4), h)     //nolint:gosec
+			h = fn5(unsafe.Add(p, off5), h)     //nolint:gosec
+			return fn6(unsafe.Add(p, off6), h)  //nolint:gosec
+		}
+	case 8:
+		fop0, fop1, fop2, fop3, fop4, fop5, fop6, fop7 := microOpToFieldOp(ops[0]), microOpToFieldOp(ops[1]), microOpToFieldOp(ops[2]), microOpToFieldOp(ops[3]), microOpToFieldOp(ops[4]), microOpToFieldOp(ops[5]), microOpToFieldOp(ops[6]), microOpToFieldOp(ops[7])
+		fn0, off0 := fop0.fn, fop0.offset
+		fn1, off1 := fop1.fn, fop1.offset
+		fn2, off2 := fop2.fn, fop2.offset
+		fn3, off3 := fop3.fn, fop3.offset
+		fn4, off4 := fop4.fn, fop4.offset
+		fn5, off5 := fop5.fn, fop5.offset
+		fn6, off6 := fop6.fn, fop6.offset
+		fn7, off7 := fop7.fn, fop7.offset
+		return func(p unsafe.Pointer, seed uint64) uint64 {
+			h := fn0(unsafe.Add(p, off0), seed) //nolint:gosec
+			h = fn1(unsafe.Add(p, off1), h)     //nolint:gosec
+			h = fn2(unsafe.Add(p, off2), h)     //nolint:gosec
+			h = fn3(unsafe.Add(p, off3), h)     //nolint:gosec
+			h = fn4(unsafe.Add(p, off4), h)     //nolint:gosec
+			h = fn5(unsafe.Add(p, off5), h)     //nolint:gosec
+			h = fn6(unsafe.Add(p, off6), h)     //nolint:gosec
+			return fn7(unsafe.Add(p, off7), h)  //nolint:gosec
+		}
 	default:
 		frozen := make([]fieldOp, len(ops))
 		for i, op := range ops {
@@ -369,6 +470,51 @@ func buildClosureFromOps(ops []microOp) HashFunction {
 			return h
 		}
 	}
+}
+
+// ── Fixed byte-block hash helpers ──────────────────────────────────────────
+
+// hashByteBlock12 avoids the generic block loop for the common 12-byte case.
+func hashByteBlock12(p unsafe.Pointer, seed uint64) uint64 {
+	b := unsafe.Slice((*byte)(p), 12) //nolint:gosec
+	h := seed ^ P0
+	h = WH64Det(binary.NativeEndian.Uint64(b[:8]), h)
+	tail := uint64(binary.NativeEndian.Uint32(b[8:12]))
+	lengthMix := uint64(len(b)) * uint64(P2)
+	return WH64Det(tail^lengthMix, h)
+}
+
+// hashByteBlock16 avoids the generic block loop for the common 16-byte case.
+func hashByteBlock16(p unsafe.Pointer, seed uint64) uint64 {
+	b := unsafe.Slice((*byte)(p), 16) //nolint:gosec
+	h := seed ^ P0
+	h = WH64Det(binary.NativeEndian.Uint64(b[:8]), h)
+	h = WH64Det(binary.NativeEndian.Uint64(b[8:16]), h)
+	lengthMix := uint64(len(b)) * uint64(P2)
+	return WH64Det(uint64(P1)^lengthMix, h)
+}
+
+// hashByteBlock24 avoids the generic block loop for the common 24-byte case.
+func hashByteBlock24(p unsafe.Pointer, seed uint64) uint64 {
+	b := unsafe.Slice((*byte)(p), 24) //nolint:gosec
+	h := seed ^ P0
+	h = WH64Det(binary.NativeEndian.Uint64(b[:8]), h)
+	h = WH64Det(binary.NativeEndian.Uint64(b[8:16]), h)
+	h = WH64Det(binary.NativeEndian.Uint64(b[16:24]), h)
+	lengthMix := uint64(len(b)) * uint64(P2)
+	return WH64Det(uint64(P1)^lengthMix, h)
+}
+
+// hashByteBlock32 avoids the generic block loop for the common 32-byte case.
+func hashByteBlock32(p unsafe.Pointer, seed uint64) uint64 {
+	b := unsafe.Slice((*byte)(p), 32) //nolint:gosec
+	h := seed ^ P0
+	h = WH64Det(binary.NativeEndian.Uint64(b[:8]), h)
+	h = WH64Det(binary.NativeEndian.Uint64(b[8:16]), h)
+	h = WH64Det(binary.NativeEndian.Uint64(b[16:24]), h)
+	h = WH64Det(binary.NativeEndian.Uint64(b[24:32]), h)
+	lengthMix := uint64(len(b)) * uint64(P2)
+	return WH64Det(uint64(P1)^lengthMix, h)
 }
 
 // ── Inline hash helpers ─────────────────────────────────────────────────────
