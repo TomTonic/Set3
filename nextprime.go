@@ -60,14 +60,14 @@ func primeTestDivisors(candidate uint64) <-chan uint64 {
 	go func() {
 		defer close(ch)
 		last := uint64(primesUnder64k[len(primesUnder64k)-1])
-		for _, p := range primesUnder64k {
+		for _, p := range &primesUnder64k {
 			sq := uint64(p) * uint64(p)
 			if sq > candidate {
 				return
 			}
 			ch <- uint64(p)
 		}
-		if candidate <= uint64(last)*uint64(last) {
+		if candidate <= last*last {
 			return
 		}
 		if last != 65521 {
@@ -101,8 +101,5 @@ func isPrime(x uint64) bool {
 			return false
 		}
 	}
-	if x < 2 {
-		return false
-	}
-	return true
+	return x >= 2
 }
