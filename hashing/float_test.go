@@ -1,3 +1,4 @@
+// nolint:gosec // All unsafe.Pointer operations are audited for bit-level float hashing tests
 package hashing
 
 import (

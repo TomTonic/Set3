@@ -12,6 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+// nolint:gosec // Test file: intentional use of math/rand for deterministic seeded tests
 package set3
 
 import (

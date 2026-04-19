@@ -12,6 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+// nolint:gosec // Test file: intentional uint32 conversions from int for capacity calculations
 package set3
 
 import (

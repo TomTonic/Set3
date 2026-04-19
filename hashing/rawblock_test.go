@@ -1,3 +1,4 @@
+// nolint:gosec // Test file: intentional unsafe.Pointer use for testing byte hashing
 package hashing
 
 import (
