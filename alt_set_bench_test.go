@@ -16,7 +16,6 @@ package set3
 
 import (
 	"fmt"
-	"math"
 	"runtime"
 	"sort"
 	"testing"
@@ -29,17 +28,22 @@ import (
 type searchDataDriver struct {
 	rng       *rtcompare.DPRNG
 	setValues []uint64
+	setLookup map[uint64]struct{}
 	hitRatio  float64
 }
 
 func newSearchDataDriver(setSize int, targetHitRatio float64, seed uint64) *searchDataDriver {
-	s := rtcompare.DPRNG{State: seed}
+	s := rtcompare.NewDPRNG(seed)
 	vals := uniqueRandomNumbers(setSize, &s)
 	result := &searchDataDriver{
 		rng: &s,
 		// Shuffle values deterministically for test coverage
 		setValues: shuffleArray(vals, &s, 3),
+		setLookup: make(map[uint64]struct{}, len(vals)),
 		hitRatio:  float64(targetHitRatio),
+	}
+	for _, v := range result.setValues {
+		result.setLookup[v] = struct{}{}
 	}
 	return result
 }
@@ -47,18 +51,24 @@ func newSearchDataDriver(setSize int, targetHitRatio float64, seed uint64) *sear
 // this function is designed in a way that both paths - table lookup and random number generation only - are about equaly fast/slow.
 // the current implementation differs in only 1-2% execution speed for the two paths.
 func (thisCfg *searchDataDriver) nextSearchValue() uint64 {
-	x := uint64(float64(math.MaxUint64) * thisCfg.hitRatio)
 	rndVal := thisCfg.rng.Uint64()
 	upper32 := uint32(rndVal >> 32)
 	idx := upper32 % uint32(uint64(len(thisCfg.setValues))) //nolint:gosec
 	tableVal := thisCfg.setValues[idx]
 	var result uint64
-	if thisCfg.rng.Uint64() < x {
+	if thisCfg.rng.Float64() < thisCfg.hitRatio {
 		// this shall be a hit
 		result = rndVal ^ tableVal ^ rndVal // use both values to make both paths equally slow/fast
 	} else {
 		// this shall be a miss
-		result = tableVal ^ rndVal ^ tableVal // use both values to make both paths equally slow/fast
+		missVal := rndVal
+		if _, ok := thisCfg.setLookup[missVal]; ok {
+			missVal = ^missVal
+			if _, ok2 := thisCfg.setLookup[missVal]; ok2 {
+				missVal ^= 0x9e3779b97f4a7c15
+			}
+		}
+		result = tableVal ^ missVal ^ tableVal // use both values to make both paths equally slow/fast
 	}
 	return result
 }
@@ -402,7 +412,10 @@ func TestSearchDataDriver(t *testing.T) {
 	sdd2 := newSearchDataDriver(setSize, targetHitRatio, seed)
 	assert.True(t, slicesEqual(sdd1.setValues, sdd2.setValues), "slices not equal")
 
-	set := FromArray(sdd1.setValues)
+	set := make(map[uint64]struct{}, len(sdd1.setValues))
+	for _, v := range sdd1.setValues {
+		set[v] = struct{}{}
+	}
 
 	rounds := 5_000_000
 	hits := 0
@@ -410,14 +423,14 @@ func TestSearchDataDriver(t *testing.T) {
 		v1 := sdd1.nextSearchValue()
 		v2 := sdd2.nextSearchValue()
 		assert.True(t, v1 == v2, "values not equal in round %d", i)
-		if set.Contains(v1) {
+		if _, ok := set[v1]; ok {
 			hits++
 		}
 	}
 	actualHitRatio := float64(hits) / float64(rounds)
 	lowerBound := targetHitRatio * 0.99
 	upperBound := targetHitRatio * 1.01
-	assert.True(t, actualHitRatio > lowerBound && actualHitRatio < upperBound, "actual hit ratio (%d) missed target hit ratio by more than 1 percent", actualHitRatio)
+	assert.True(t, actualHitRatio > lowerBound && actualHitRatio < upperBound, "actual hit ratio (%f) missed target hit ratio by more than 1 percent", actualHitRatio)
 }
 
 func slicesEqual(a, b []uint64) bool {
