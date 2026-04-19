@@ -31,7 +31,10 @@ jobs:
       - name: go mod tidy check
         uses: katexochen/go-tidy-check@427c8c07d3d83ab8d7290cad04ce71c12eab3674 # v2.0.1
 
-      - name: Run golangci-lint
+      - name: Install golangci-lint
         uses: golangci/golangci-lint-action@1e7e51e771db61008b38414a730f564565cf7c20 # v9.2.0
         with:
-          version: v2.6.1
+          version: latest
+
+      - name: Run golangci-lint
+        run: golangci-lint run ./...
