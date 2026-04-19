@@ -1,0 +1,3 @@
+# Ignore linters in these folders (patterns are matched against file paths).
+hashing/alternatives/**
+hashing/benchmark/**
