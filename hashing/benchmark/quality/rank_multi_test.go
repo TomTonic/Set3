@@ -1,6 +1,6 @@
-package set3
+package quality
 
-// hashing_mixrank_multi_test.go — ranking tests for float32, int16, int64, float64.
+// rank_multi_test.go — ranking tests for float32, int16, int64, float64.
 //
 // Each test follows the same methodology as TestHashRank32MixersAndWideningExhaustive:
 //   - Enumerate all unique values of the type and hash each exactly once.
@@ -24,6 +24,9 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/TomTonic/Set3/hashing"
+	"github.com/TomTonic/Set3/hashing/alternatives"
+	"github.com/TomTonic/Set3/hashing/benchmarks"
 	"github.com/TomTonic/rtcompare"
 )
 
@@ -304,7 +307,7 @@ func canonicalF32Values() <-chan uint64 {
 		// 2. canonical NaN
 		ch <- canonicalNaNF32
 		// 3. all non-special values via xorshift32* (period 2^32-1, never produces 0)
-		x := xorshift32Star{state: rtcompare.NewCPRNG(16).Uint32() | 1}
+		x := benchmarks.XorShift32Star{State: rtcompare.NewCPRNG(16).Uint32() | 1}
 		for i := uint64(0); i < (1<<32)-1; i++ {
 			u := x.Uint32()
 			if !isSpecialF32(u) {
@@ -432,36 +435,36 @@ func candidateSetF32() []rankCandidateM {
 			label:  "splitmix64 + goldenRatio32 [PROD-SM]",
 			isProd: true,
 			hash: func(raw, seed uint64) uint64 {
-				v := goldenRatio32 * raw
-				return splitmix64(seed ^ v)
+				v := hashing.GoldenRatio32 * raw
+				return hashing.Splitmix64(seed ^ v)
 			},
 		},
 		{
 			label: "splitmix64 + sqrt2_1_32",
 			hash: func(raw, seed uint64) uint64 {
-				v := sqrt2_1_32 * raw
-				return splitmix64(seed ^ v)
+				v := hashing.Sqrt2_1_32 * raw
+				return hashing.Splitmix64(seed ^ v)
 			},
 		},
 		{
 			label: "splitmix64 + pie7_32",
 			hash: func(raw, seed uint64) uint64 {
-				v := pie7_32 * raw
-				return splitmix64(seed ^ v)
+				v := hashing.Pie7_32 * raw
+				return hashing.Splitmix64(seed ^ v)
 			},
 		},
 		{
 			label: "splitmix64 + replication_0x0000000100000001",
 			hash: func(raw, seed uint64) uint64 {
 				v := uint64(0x0000_0001_0000_0001) * raw
-				return splitmix64(seed ^ v)
+				return hashing.Splitmix64(seed ^ v)
 			},
 		},
 		{
 			label: "splitmix64 + largestPrime32",
 			hash: func(raw, seed uint64) uint64 {
 				v := uint64(0x0000_0000_FFFF_FFFB) * raw
-				return splitmix64(seed ^ v)
+				return hashing.Splitmix64(seed ^ v)
 			},
 		},
 		// ── wh32detExtMul variants ───────────────────────────────────────────
@@ -469,31 +472,31 @@ func candidateSetF32() []rankCandidateM {
 			label:  "wh32detExtMul + goldenRatio32 [PROD-WH]",
 			isProd: true,
 			hash: func(raw, seed uint64) uint64 {
-				return wh32detExtMul(goldenRatio32*raw, seed)
+				return alternatives.WH32DetExtMul(hashing.GoldenRatio32*raw, seed)
 			},
 		},
 		{
 			label: "wh32detExtMul + sqrt2_1_32",
 			hash: func(raw, seed uint64) uint64 {
-				return wh32detExtMul(sqrt2_1_32*raw, seed)
+				return alternatives.WH32DetExtMul(hashing.Sqrt2_1_32*raw, seed)
 			},
 		},
 		{
 			label: "wh32detExtMul + pie7_32",
 			hash: func(raw, seed uint64) uint64 {
-				return wh32detExtMul(pie7_32*raw, seed)
+				return alternatives.WH32DetExtMul(hashing.Pie7_32*raw, seed)
 			},
 		},
 		{
 			label: "wh32detExtMul + replication_0x0000000100000001",
 			hash: func(raw, seed uint64) uint64 {
-				return wh32detExtMul(uint64(0x0000_0001_0000_0001)*raw, seed)
+				return alternatives.WH32DetExtMul(uint64(0x0000_0001_0000_0001)*raw, seed)
 			},
 		},
 		{
 			label: "wh32detExtMul + largestPrime32",
 			hash: func(raw, seed uint64) uint64 {
-				return wh32detExtMul(uint64(0x0000_0000_FFFF_FFFB)*raw, seed)
+				return alternatives.WH32DetExtMul(uint64(0x0000_0000_FFFF_FFFB)*raw, seed)
 			},
 		},
 	}
@@ -598,50 +601,50 @@ func candidateSetI16() []rankCandidateM {
 			label:  "splitmix64 + pie7_48=spread16to64 [PROD]",
 			isProd: true,
 			hash: func(raw, seed uint64) uint64 {
-				return splitmix64(seed ^ (pie7_48 * raw))
+				return hashing.Splitmix64(seed ^ (hashing.Pie7_48 * raw))
 			},
 		},
 		{
 			label: "splitmix64 + goldenRatio48",
 			hash: func(raw, seed uint64) uint64 {
-				return splitmix64(seed ^ (goldenRatio48 * raw))
+				return hashing.Splitmix64(seed ^ (hashing.GoldenRatio48 * raw))
 			},
 		},
 		{
 			label: "splitmix64 + sqrt2_1_48",
 			hash: func(raw, seed uint64) uint64 {
-				return splitmix64(seed ^ (sqrt2_1_48 * raw))
+				return hashing.Splitmix64(seed ^ (hashing.Sqrt2_1_48 * raw))
 			},
 		},
 		{
 			label: "splitmix64 + replication_0x0001000100010001",
 			hash: func(raw, seed uint64) uint64 {
-				return splitmix64(seed ^ (uint64(0x0001_0001_0001_0001) * raw))
+				return hashing.Splitmix64(seed ^ (uint64(0x0001_0001_0001_0001) * raw))
 			},
 		},
 		// ── wh16detExtMul variants ───────────────────────────────────────────
 		{
 			label: "wh16detExtMul + replication_0x0001000100010001 [WH-structural]",
 			hash: func(raw, seed uint64) uint64 {
-				return wh16detExtMul(uint64(0x0001_0001_0001_0001)*raw, seed)
+				return alternatives.WH16DetExtMul(uint64(0x0001_0001_0001_0001)*raw, seed)
 			},
 		},
 		{
 			label: "wh16detExtMul + pie7_48",
 			hash: func(raw, seed uint64) uint64 {
-				return wh16detExtMul(pie7_48*raw, seed)
+				return alternatives.WH16DetExtMul(hashing.Pie7_48*raw, seed)
 			},
 		},
 		{
 			label: "wh16detExtMul + goldenRatio48",
 			hash: func(raw, seed uint64) uint64 {
-				return wh16detExtMul(goldenRatio48*raw, seed)
+				return alternatives.WH16DetExtMul(hashing.GoldenRatio48*raw, seed)
 			},
 		},
 		{
 			label: "wh16detExtMul + sqrt2_1_48",
 			hash: func(raw, seed uint64) uint64 {
-				return wh16detExtMul(sqrt2_1_48*raw, seed)
+				return alternatives.WH16DetExtMul(hashing.Sqrt2_1_48*raw, seed)
 			},
 		},
 	}
@@ -730,7 +733,7 @@ const hash64SamplesDefault uint64 = 10_000_000
 
 // wh64detLambda wraps wh64det as a func(raw, seed uint64) uint64 for the generic framework.
 func wh64detLambda(raw, seed uint64) uint64 {
-	return wh64det(raw, seed)
+	return hashing.WH64Det(raw, seed)
 }
 
 func candidateSetI64() []rankCandidateM {
@@ -743,7 +746,7 @@ func candidateSetI64() []rankCandidateM {
 		{
 			label: "splitmix64",
 			hash: func(raw, seed uint64) uint64 {
-				return splitmix64(seed ^ raw)
+				return hashing.Splitmix64(seed ^ raw)
 			},
 		},
 		{
@@ -751,10 +754,10 @@ func candidateSetI64() []rankCandidateM {
 			hash: func(raw, seed uint64) uint64 {
 				a := raw
 				b := bits.RotateLeft64(a^(a>>32), 16)
-				c := a ^ p1
+				c := a ^ hashing.P1
 				d := b ^ seed
-				e := mix(c, d)
-				return mix(m5^8, e)
+				e := hashing.Mix(c, d)
+				return hashing.Mix(hashing.M5^8, e)
 			},
 		},
 	}
@@ -859,25 +862,25 @@ func candidateSetF64() []rankCandidateM {
 			label:  "splitmix64 + identity (no widening) [PROD]",
 			isProd: true,
 			hash: func(raw, seed uint64) uint64 {
-				return splitmix64(seed ^ raw)
+				return hashing.Splitmix64(seed ^ raw)
 			},
 		},
 		{
 			label: "splitmix64 + goldenRatio64 pre-multiply",
 			hash: func(raw, seed uint64) uint64 {
-				return splitmix64(seed ^ (goldenRatio64 * raw))
+				return hashing.Splitmix64(seed ^ (hashing.GoldenRatio64 * raw))
 			},
 		},
 		{
 			label: "splitmix64 + sqrt2_1_64 pre-multiply",
 			hash: func(raw, seed uint64) uint64 {
-				return splitmix64(seed ^ (sqrt2_1_64 * raw))
+				return hashing.Splitmix64(seed ^ (hashing.Sqrt2_1_64 * raw))
 			},
 		},
 		{
 			label: "splitmix64 + pie7_64 pre-multiply",
 			hash: func(raw, seed uint64) uint64 {
-				return splitmix64(seed ^ (pie7_64 * raw))
+				return hashing.Splitmix64(seed ^ (hashing.Pie7_64 * raw))
 			},
 		},
 		{
@@ -887,13 +890,13 @@ func candidateSetF64() []rankCandidateM {
 		{
 			label: "wh64det + goldenRatio64 pre-multiply",
 			hash: func(raw, seed uint64) uint64 {
-				return wh64detLambda(goldenRatio64*raw, seed)
+				return wh64detLambda(hashing.GoldenRatio64*raw, seed)
 			},
 		},
 		{
 			label: "wh64det + sqrt2_1_64 pre-multiply",
 			hash: func(raw, seed uint64) uint64 {
-				return wh64detLambda(sqrt2_1_64*raw, seed)
+				return wh64detLambda(hashing.Sqrt2_1_64*raw, seed)
 			},
 		},
 	}

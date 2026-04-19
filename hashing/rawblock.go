@@ -1,4 +1,4 @@
-package set3
+package hashing
 
 import "reflect"
 
@@ -40,12 +40,12 @@ type RawByteBlockEligibility struct {
 // The result is conservative by design to avoid subtle semantic regressions.
 func CanUseUnsafeRawByteBlockHasher[K comparable]() RawByteBlockEligibility {
 	var zero K
-	return canUseUnsafeRawByteBlockHasherType(reflect.TypeOf(zero))
+	return CanUseUnsafeRawByteBlockHasherType(reflect.TypeOf(zero))
 }
 
-// canUseUnsafeRawByteBlockHasherType recursively inspects t and decides whether a
+// CanUseUnsafeRawByteBlockHasherType recursively inspects t and decides whether a
 // raw-memory byte-block hash is semantics-preserving for values of t.
-func canUseUnsafeRawByteBlockHasherType(t reflect.Type) RawByteBlockEligibility {
+func CanUseUnsafeRawByteBlockHasherType(t reflect.Type) RawByteBlockEligibility {
 	if t == nil {
 		return RawByteBlockEligibility{Eligible: false, Reason: "nil type"}
 	}
@@ -67,7 +67,7 @@ func canUseUnsafeRawByteBlockHasherType(t reflect.Type) RawByteBlockEligibility 
 		return RawByteBlockEligibility{Eligible: false, Reason: "complex contains float components requiring canonicalization"}
 
 	case reflect.Array:
-		elem := canUseUnsafeRawByteBlockHasherType(t.Elem())
+		elem := CanUseUnsafeRawByteBlockHasherType(t.Elem())
 		if !elem.Eligible {
 			return RawByteBlockEligibility{Eligible: false, Reason: "array element not eligible: " + elem.Reason}
 		}
@@ -87,7 +87,7 @@ func canUseUnsafeRawByteBlockHasherType(t reflect.Type) RawByteBlockEligibility 
 				return RawByteBlockEligibility{Eligible: false, Reason: "struct has padding bytes"}
 			}
 
-			child := canUseUnsafeRawByteBlockHasherType(f.Type)
+			child := CanUseUnsafeRawByteBlockHasherType(f.Type)
 			if !child.Eligible {
 				return RawByteBlockEligibility{Eligible: false, Reason: "struct field " + f.Name + " not eligible: " + child.Reason}
 			}

@@ -21,6 +21,8 @@ import (
 	"math/bits"
 	"math/rand/v2"
 	"strings"
+
+	"github.com/TomTonic/Set3/hashing"
 )
 
 const (
@@ -74,7 +76,7 @@ func set3hasZeroByte(x uint64) uint64 {
 
 // Set3 is a hash set of type K.
 type Set3[T comparable] struct {
-	hashFunction RuntimeHasher[T]
+	hashFunction hashing.RuntimeHasher[T]
 	groupCtrl    []uint64
 	groupSlot    [][set3groupSize]T
 	resident     uint32
@@ -141,7 +143,7 @@ func EmptyWithCapacity[T comparable](initialCapacity uint32) *Set3[T] {
 	reqNrOfGroups := calcReqNrOfGroups(initialCapacity)
 	nrOfGroups := nextPrime(uint64(reqNrOfGroups))
 	result := &Set3[T]{
-		hashFunction: MakeRuntimeHasher[T](uint64((rand.Uint64() & 0xFFFFFFFFFFFFFFE) + 1)), // make sure seed is not zero
+		hashFunction: hashing.MakeRuntimeHasher[T](uint64((rand.Uint64() & 0xFFFFFFFFFFFFFFE) + 1)), // make sure seed is not zero
 		groupCtrl:    make([]uint64, nrOfGroups),
 		groupSlot:    make([][set3groupSize]T, nrOfGroups),
 		elementLimit: uint32(float64(nrOfGroups) * set3maxAvgGroupLoad),

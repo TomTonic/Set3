@@ -1,4 +1,4 @@
-package set3
+package hashing
 
 import (
 	"reflect"
@@ -64,7 +64,7 @@ func TestCanUseUnsafeRawByteBlockHasherType_ScalarsAndSimpleKinds(t *testing.T) 
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			got := canUseUnsafeRawByteBlockHasherType(tc.t)
+			got := CanUseUnsafeRawByteBlockHasherType(tc.t)
 			if got.Eligible != tc.ok {
 				t.Fatalf("eligible=%v, want %v (reason=%q)", got.Eligible, tc.ok, got.Reason)
 			}
@@ -93,7 +93,7 @@ func TestCanUseUnsafeRawByteBlockHasherType_StructRules(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			got := canUseUnsafeRawByteBlockHasherType(tc.t)
+			got := CanUseUnsafeRawByteBlockHasherType(tc.t)
 			if got.Eligible != tc.ok {
 				t.Fatalf("eligible=%v, want %v (reason=%q)", got.Eligible, tc.ok, got.Reason)
 			}
@@ -118,7 +118,7 @@ func TestCanUseUnsafeRawByteBlockHasherType_Arrays(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			got := canUseUnsafeRawByteBlockHasherType(tc.t)
+			got := CanUseUnsafeRawByteBlockHasherType(tc.t)
 			if got.Eligible != tc.ok {
 				t.Fatalf("eligible=%v, want %v (reason=%q)", got.Eligible, tc.ok, got.Reason)
 			}
@@ -151,8 +151,8 @@ func TestMakeRuntimeHasher_UsesRawByteHasherWhenEligible(t *testing.T) {
 	for _, v := range values {
 		p := unsafe.Pointer(&v)
 		got := h.fn(p, seed)
-		wantRaw := hashAsByteArray[rbNoPaddingStruct](p, seed)
-		wantFallback := hashFallbackMaphash[rbNoPaddingStruct](p, seed)
+		wantRaw := HashAsByteArray[rbNoPaddingStruct](p, seed)
+		wantFallback := HashFallbackMaphash[rbNoPaddingStruct](p, seed)
 		if got != wantRaw {
 			t.Fatalf("expected raw-byte hasher result, got=%#x wantRaw=%#x", got, wantRaw)
 		}
@@ -174,8 +174,8 @@ func TestMakeRuntimeHasher_DoesNotUseRawByteHasherWhenIneligible(t *testing.T) {
 	for _, v := range values {
 		p := unsafe.Pointer(&v)
 		got := h.fn(p, seed)
-		wantFallback := hashFallbackMaphash[rbPaddingStruct](p, seed)
-		wantRaw := hashAsByteArray[rbPaddingStruct](p, seed)
+		wantFallback := HashFallbackMaphash[rbPaddingStruct](p, seed)
+		wantRaw := HashAsByteArray[rbPaddingStruct](p, seed)
 		if got != wantFallback {
 			t.Fatalf("expected fallback hasher result, got=%#x wantFallback=%#x", got, wantFallback)
 		}
@@ -200,7 +200,7 @@ func TestMakeRuntimeHasher_DoesNotUseRawByteHasherForFloatStruct(t *testing.T) {
 	for _, v := range values {
 		p := unsafe.Pointer(&v)
 		got := h.fn(p, seed)
-		wantFallback := hashFallbackMaphash[rbFloatStruct](p, seed)
+		wantFallback := HashFallbackMaphash[rbFloatStruct](p, seed)
 		if got != wantFallback {
 			t.Fatalf("expected fallback hasher result for float struct, got=%#x wantFallback=%#x", got, wantFallback)
 		}

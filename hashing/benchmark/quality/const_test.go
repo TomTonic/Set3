@@ -1,32 +1,76 @@
-package set3
+package quality
 
 import (
 	"math"
+	"math/bits"
 	"runtime"
 	"slices"
 	"sync"
 	"testing"
 
+	"github.com/TomTonic/Set3/hashing"
+	"github.com/TomTonic/Set3/hashing/benchmarks"
 	"github.com/TomTonic/rtcompare"
 )
 
-// This test compares different constants to distribute 32-bit values
+// getGroupIndex computes the group index for a given hash value and group count.
+// This mirrors the approach used by the Set3 hash set for bucket selection.
+func getGroupIndex(hash, groupCount uint64) uint64 {
+	hi, _ := bits.Mul64(hash, groupCount)
+	return hi
+}
+
+// computeRelStdDevAndMaxDev calculates the relative standard deviation and
+// maximum relative deviation for a slice of bucket counts.
+func computeRelStdDevAndMaxDev(buckets []uint32) (relStdDev, maxDev float64) {
+	n := float64(len(buckets))
+	var sum uint64
+	for _, v := range buckets {
+		sum += uint64(v)
+	}
+	mean := float64(sum) / n
+	var varianceSum float64
+	for _, v := range buckets {
+		diff := float64(v) - mean
+		varianceSum += diff * diff
+		dev := math.Abs(diff) / mean
+		if dev > maxDev {
+			maxDev = dev
+		}
+	}
+	stdDev := math.Sqrt(varianceSum / n)
+	relStdDev = stdDev / mean
+	return relStdDev, maxDev
+}
+
+func testConstantForSplitMix(bitWidth, bucketCount uint32, constant uint64) (relStdDev, maxDev float64) {
+	buckets := make([]uint32, bucketCount)
+	for i := range uint64(1<<bitWidth - 1) {
+		h := hashing.Splitmix64(i * constant) // this is the same as if seed=0
+		bucket := getGroupIndex(h, uint64(bucketCount))
+		buckets[bucket]++
+	}
+	relStdDev, maxDev = computeRelStdDevAndMaxDev(buckets)
+	return relStdDev, maxDev
+}
+
+// This test compares different constants to distribute 16-bit values
 // into a 64-bit value for better bit dispersion. The results are hashed
 // with splitmix64 and mapped into 128 buckets (low 7 bits).
 func TestHashingCompare16BitConstantsForSplitMix7BitBuckets(t *testing.T) {
 	var testDistribConstants = []uint64{
 		0x0001000100010001, // simple replication
-		goldenRatio48,
-		sqrt2_1_48,
-		pie7_48,
+		hashing.GoldenRatio48,
+		hashing.Sqrt2_1_48,
+		hashing.Pie7_48,
 		0x000100010000FFD1, // the largest prime p such that p*65535 < 2^64
 	}
 	t.Logf("Will iterate through %d constants\n", len(testDistribConstants))
 	for ci, c := range testDistribConstants {
 		buckets := [128]uint32{}
 		for i := range uint64(1<<16 - 1) {
-			h := splitmix64(i * c) // this is the same as if seed=0
-			bucket := h & 0x7F     // 128 buckets
+			h := hashing.Splitmix64(i * c) // this is the same as if seed=0
+			bucket := h & 0x7F             // 128 buckets
 			buckets[bucket]++
 		}
 		relStdDev, maxDev := computeRelStdDevAndMaxDev(buckets[:])
@@ -34,7 +78,7 @@ func TestHashingCompare16BitConstantsForSplitMix7BitBuckets(t *testing.T) {
 	}
 }
 
-// This test compares different constants to distribute 32-bit values
+// This test compares different constants to distribute 16-bit values
 // into a 64-bit value for better bit dispersion. The results are hashed
 // with splitmix64 and mapped into various numbers of groups.
 func TestHashingCompare16BitConstantsForSplitMixGroupCountBuckets(t *testing.T) {
@@ -43,14 +87,14 @@ func TestHashingCompare16BitConstantsForSplitMixGroupCountBuckets(t *testing.T) 
 	}
 	var testDistribConstants = []uint64{
 		0x0001000100010001, // simple replication
-		goldenRatio48,
-		sqrt2_1_48,
-		pie7_48,
+		hashing.GoldenRatio48,
+		hashing.Sqrt2_1_48,
+		hashing.Pie7_48,
 		0x000100010000FFD1, // the largest prime p such that p*65535 < 2^64
 	}
 	const numberOfGroupCountsToTest = 1721 // select higher values to get more accurate results. however 307 makes the test run for over 90 minutes, for example.
 	groupCountsToTest := make([]uint32, 0, numberOfGroupCountsToTest)
-	for v := range FilteredNumbers(numberOfGroupCountsToTest) {
+	for v := range benchmarks.FilteredNumbers(numberOfGroupCountsToTest) {
 		groupCountsToTest = append(groupCountsToTest, uint32(v))
 		if v >= 10_083 { // Set3 will not need more then 10_083 groups to store 16-bit values in a set
 			break
@@ -78,7 +122,6 @@ func TestHashingCompare16BitConstantsForSplitMixGroupCountBuckets(t *testing.T) 
 				mu.Lock()
 				relStdDevResults[ci][gi] = relStdDev
 				maxDevResults[ci][gi] = maxDev
-				//t.Logf("%#10x → %5d grps: relStdDev=%.6f%%, maxDev=%.6f%%\n", c, gc, relStdDev*100, maxDev*100)
 				mu.Unlock()
 				<-sem
 			}(ci, gi, c, gc)
@@ -138,17 +181,17 @@ func TestHashingCompare32BitConstantsForSplitMix7BitBuckets(t *testing.T) {
 	}
 	var testDistribConstants = []uint64{
 		0x0000_0001_0000_0001,
-		goldenRatio32,
-		sqrt2_1_32,
-		pie7_32,
+		hashing.GoldenRatio32,
+		hashing.Sqrt2_1_32,
+		hashing.Pie7_32,
 		0x00000000FFFFFFFB,
 	}
 	t.Logf("Will iterate through %d constants\n", len(testDistribConstants))
 	for ci, c := range testDistribConstants {
 		buckets := [128]uint32{}
 		for i := range uint64(1<<32 - 1) {
-			h := splitmix64(i * c) // this is the same as if seed=0
-			bucket := h & 0x7F     // 128 buckets
+			h := hashing.Splitmix64(i * c) // this is the same as if seed=0
+			bucket := h & 0x7F             // 128 buckets
 			buckets[bucket]++
 		}
 		relStdDev, maxDev := computeRelStdDevAndMaxDev(buckets[:])
@@ -161,26 +204,28 @@ func TestHashingCompare32BitConstantsForSplitMix7BitBuckets(t *testing.T) {
 // with splitmix64 and mapped into various numbers of groups.
 func TestHashingCompare32BitConstantsForSplitMixGroupCountBuckets(t *testing.T) {
 	t.Skip("runtime over 90 minutes!")
+	const maxAvgGroupLoad = 6.5
+	const groupGrowthFactor = 1.8
 	var testDistribConstants = []uint64{
 		0x0000_0001_0000_0001,
-		goldenRatio32,
-		sqrt2_1_32,
-		pie7_32,
+		hashing.GoldenRatio32,
+		hashing.Sqrt2_1_32,
+		hashing.Pie7_32,
 		0x00000000FFFFFFFB,
 	}
 	const numberOfGroupCountsToTest = 307 // select higher values to get more accurate results. however 307 makes the test run for over 90 minutes, for example.
 	groupCountsToTest := make([]uint32, 0, numberOfGroupCountsToTest)
-	usualStartNumber := nextPrime(uint64(calcReqNrOfGroups(21)))
+	usualStartNumber := benchmarks.NextPrime(uint64(math.Ceil(21.0 / maxAvgGroupLoad)))
 	current := uint32(usualStartNumber)
 	for range min(numberOfGroupCountsToTest, 29) {
 		groupCountsToTest = append(groupCountsToTest, current)
-		current = uint32(nextPrime(uint64(calcNextGroupCount(current))))
+		current = uint32(benchmarks.NextPrime(uint64(float64(current) * groupGrowthFactor)))
 	}
-	for v := range FilteredNumbers(numberOfGroupCountsToTest) {
+	for v := range benchmarks.FilteredNumbers(numberOfGroupCountsToTest) {
 		groupCountsToTest = append(groupCountsToTest, uint32(v))
 		// make sure to produce enough unique numbers to match the required count
 		slices.Sort(groupCountsToTest)
-		groupCountsToTest = uniqueSortedUint32s(groupCountsToTest)
+		groupCountsToTest = benchmarks.UniqueSortedUint32s(groupCountsToTest)
 		if len(groupCountsToTest) >= numberOfGroupCountsToTest {
 			break
 		}
@@ -257,51 +302,4 @@ func TestHashingCompare32BitConstantsForSplitMixGroupCountBuckets(t *testing.T) 
 			}
 		}
 	}
-}
-
-func testConstantForSplitMix(bits, bucketCount uint32, constant uint64) (relStdDev, maxDev float64) {
-	buckets := make([]uint32, bucketCount)
-	for i := range uint64(1<<bits - 1) {
-		h := splitmix64(i * constant) // this is the same as if seed=0
-		bucket := getGroupIndex(h, uint64(bucketCount))
-		buckets[bucket]++
-	}
-	relStdDev, maxDev = computeRelStdDevAndMaxDev(buckets)
-	return relStdDev, maxDev
-}
-
-// uniqueSortedUint32s removes duplicates from a sorted slice of uint32 in-place and returns the deduplicated slice.
-func uniqueSortedUint32s(in []uint32) []uint32 {
-	if len(in) == 0 {
-		return in
-	}
-	j := 0
-	for i := 1; i < len(in); i++ {
-		if in[i] != in[j] {
-			j++
-			in[j] = in[i]
-		}
-	}
-	return in[:j+1]
-}
-
-func computeRelStdDevAndMaxDev(buckets []uint32) (relStdDev, maxDev float64) {
-	n := float64(len(buckets))
-	var sum uint64
-	for _, v := range buckets {
-		sum += uint64(v)
-	}
-	mean := float64(sum) / n
-	var varianceSum float64
-	for _, v := range buckets {
-		diff := float64(v) - mean
-		varianceSum += diff * diff
-		dev := math.Abs(diff) / mean
-		if dev > maxDev {
-			maxDev = dev
-		}
-	}
-	stdDev := math.Sqrt(varianceSum / n)
-	relStdDev = stdDev / mean
-	return relStdDev, maxDev
 }

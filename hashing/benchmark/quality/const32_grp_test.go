@@ -1,10 +1,11 @@
-package set3
+package quality
 
 import (
 	"runtime"
 	"sync"
 	"testing"
 
+	"github.com/TomTonic/Set3/hashing"
 	"github.com/TomTonic/rtcompare"
 )
 
@@ -19,9 +20,9 @@ func TestHashingCompare32BitConstantsForSplitMixGroupCountBuckets_Fast(t *testin
 	}
 	var testDistribConstants = []uint64{
 		0x0000_0001_0000_0001, // simple replication
-		goldenRatio32,
-		sqrt2_1_32,
-		pie7_32,
+		hashing.GoldenRatio32,
+		hashing.Sqrt2_1_32,
+		hashing.Pie7_32,
 		0x00000000FFFFFFFB, // largest prime p such that p*2^32 < 2^64
 	}
 	constNames := []string{

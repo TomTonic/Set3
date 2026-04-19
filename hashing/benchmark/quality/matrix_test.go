@@ -1,4 +1,4 @@
-package set3
+package quality
 
 import (
 	"fmt"
@@ -11,22 +11,27 @@ import (
 	"testing"
 	"unsafe"
 
+	"github.com/TomTonic/Set3/hashing"
+	"github.com/TomTonic/Set3/hashing/alternatives"
+	"github.com/TomTonic/Set3/hashing/benchmarks"
 	"github.com/TomTonic/rtcompare"
 )
 
+const maxAvgGroupLoad = 6.5
+
 type hashFunctionsForType struct {
-	typesDescr      string                                              // types for which the hashfunctions are applicable
-	implementations []hashfunction                                      // available hashfunction implementations for the types
-	samples         func(limit uint64) <-chan any                       // function that produces sample values of the types (stream via channel)
-	allValues       func(limit uint64) <-chan any                       // up to limit values of the according type in ascending order
-	randomValues    func(rng rtcompare.DPRNG, limit uint64) <-chan any  // up to limit values generated from the given random source. the values returned might contain duplicates but the sequence of values is deterministic
-	apply           func(h hashfunction, value any, seed uint64) uint64 // helper function that applies a hashfunction to a value of the types
-	cardinality     uint64                                              // the numeber of distinct values a hashfunction should produce for the samples
+	typesDescr      string                                                      // types for which the hashfunctions are applicable
+	implementations []hashing.HashFunction                                      // available hashfunction implementations for the types
+	samples         func(limit uint64) <-chan any                               // function that produces sample values of the types (stream via channel)
+	allValues       func(limit uint64) <-chan any                               // up to limit values of the according type in ascending order
+	randomValues    func(rng rtcompare.DPRNG, limit uint64) <-chan any          // up to limit values generated from the given random source. the values returned might contain duplicates but the sequence of values is deterministic
+	apply           func(h hashing.HashFunction, value any, seed uint64) uint64 // helper function that applies a hashfunction to a value of the types
+	cardinality     uint64                                                      // the numeber of distinct values a hashfunction should produce for the samples
 }
 
 var hashFunctionsForBool = hashFunctionsForType{
 	typesDescr:      "b01",
-	implementations: []hashfunction{hashBool},
+	implementations: []hashing.HashFunction{hashing.HashBool},
 	samples: func(limit uint64) <-chan any {
 		ch := make(chan any, 2)
 		go func() {
@@ -59,7 +64,7 @@ var hashFunctionsForBool = hashFunctionsForType{
 		}()
 		return ch
 	},
-	apply: func(h hashfunction, value any, seed uint64) uint64 {
+	apply: func(h hashing.HashFunction, value any, seed uint64) uint64 {
 		v := value.(bool)
 		return h(unsafe.Pointer(&v), seed)
 	},
@@ -68,7 +73,7 @@ var hashFunctionsForBool = hashFunctionsForType{
 
 var hashFunctionsForUint8 = hashFunctionsForType{
 	typesDescr:      "i08",
-	implementations: []hashfunction{swirlByte, xorshift64star08, hashI08SM, hashI08WH, hashI08MH},
+	implementations: []hashing.HashFunction{hashing.SwirlByte, alternatives.XorShift64Star08, alternatives.HashI08SM, alternatives.HashI08WH, alternatives.HashI08MH},
 	samples: func(limit uint64) <-chan any {
 		ch := make(chan any, 32)
 		go func() {
@@ -107,7 +112,7 @@ var hashFunctionsForUint8 = hashFunctionsForType{
 		}()
 		return ch
 	},
-	apply: func(h hashfunction, value any, seed uint64) uint64 {
+	apply: func(h hashing.HashFunction, value any, seed uint64) uint64 {
 		v := value.(uint8)
 		return h(unsafe.Pointer(&v), seed)
 	},
@@ -116,12 +121,12 @@ var hashFunctionsForUint8 = hashFunctionsForType{
 
 var hashFunctionsForUint16 = hashFunctionsForType{
 	typesDescr:      "i16",
-	implementations: []hashfunction{hashI16SM, hashI16WH, hashI16MH, xorshift64star16},
+	implementations: []hashing.HashFunction{hashing.HashI16SM, alternatives.HashI16WH, alternatives.HashI16MH, alternatives.XorShift64Star16},
 	samples: func(limit uint64) <-chan any {
 		ch := make(chan any, 8192)
 		go func() {
 			n := limit
-			x := xorshift16Star{state: rtcompare.NewCPRNG(16).Uint16() | 1} // non-zero random seed
+			x := benchmarks.XorShift16Star{State: rtcompare.NewCPRNG(16).Uint16() | 1} // non-zero random seed
 			if n == 0 || n >= 1<<16 {
 				n = 1<<16 - 1
 			}
@@ -163,7 +168,7 @@ var hashFunctionsForUint16 = hashFunctionsForType{
 		}()
 		return ch
 	},
-	apply: func(h hashfunction, value any, seed uint64) uint64 {
+	apply: func(h hashing.HashFunction, value any, seed uint64) uint64 {
 		v := value.(uint16)
 		return h(unsafe.Pointer(&v), seed)
 	},
@@ -172,12 +177,12 @@ var hashFunctionsForUint16 = hashFunctionsForType{
 
 var hashFunctionsForUint32 = hashFunctionsForType{
 	typesDescr:      "i32",
-	implementations: []hashfunction{hashI32SM, hashI32WH, hashI32WHdet, hashI32MH},
+	implementations: []hashing.HashFunction{alternatives.HashI32SM, alternatives.HashI32WH, hashing.HashI32WHdet, alternatives.HashI32MH},
 	samples: func(limit uint64) <-chan any {
 		ch := make(chan any, 8192)
 		go func() {
 			n := limit
-			x := xorshift32Star{state: rtcompare.NewCPRNG(16).Uint32() | 1} // non-zero random seed
+			x := benchmarks.XorShift32Star{State: rtcompare.NewCPRNG(16).Uint32() | 1} // non-zero random seed
 			if n == 0 || n >= 1<<32 {
 				n = 1<<32 - 1
 			}
@@ -219,7 +224,7 @@ var hashFunctionsForUint32 = hashFunctionsForType{
 		}()
 		return ch
 	},
-	apply: func(h hashfunction, value any, seed uint64) uint64 {
+	apply: func(h hashing.HashFunction, value any, seed uint64) uint64 {
 		v := value.(uint32)
 		return h(unsafe.Pointer(&v), seed)
 	},
@@ -228,7 +233,7 @@ var hashFunctionsForUint32 = hashFunctionsForType{
 
 var hashFunctionsForUint64 = hashFunctionsForType{
 	typesDescr:      "i64",
-	implementations: []hashfunction{hashI64SM, hashI64WH, hashI64WHdet, hashI64MH},
+	implementations: []hashing.HashFunction{alternatives.HashI64SM, alternatives.HashI64WH, hashing.HashI64WHdet, alternatives.HashI64MH},
 	samples: func(limit uint64) <-chan any {
 		ch := make(chan any, 8192)
 		go func() {
@@ -261,7 +266,7 @@ var hashFunctionsForUint64 = hashFunctionsForType{
 		}()
 		return ch
 	},
-	apply: func(h hashfunction, value any, seed uint64) uint64 {
+	apply: func(h hashing.HashFunction, value any, seed uint64) uint64 {
 		v := value.(uint64)
 		return h(unsafe.Pointer(&v), seed)
 	},
@@ -272,12 +277,12 @@ const f32Cardinality = 1<<32 - 16777214 + 1 - 1 // all bit patterns except NaNs 
 
 var hashFunctionsForFloat32 = hashFunctionsForType{
 	typesDescr:      "f32",
-	implementations: []hashfunction{hashF32SM, hashF32MH},
+	implementations: []hashing.HashFunction{hashing.HashF32SM, alternatives.HashF32MH},
 	samples: func(limit uint64) <-chan any {
 		ch := make(chan any, 8192)
 		go func() {
 			n := limit
-			x := xorshift32Star{state: rtcompare.NewCPRNG(16).Uint32() | 1} // non-zero random seed
+			x := benchmarks.XorShift32Star{State: rtcompare.NewCPRNG(16).Uint32() | 1} // non-zero random seed
 			if n == 0 || n > f32Cardinality {
 				n = f32Cardinality
 			}
@@ -302,7 +307,7 @@ var hashFunctionsForFloat32 = hashFunctionsForType{
 		}()
 		return ch
 	},
-	apply: func(h hashfunction, value any, seed uint64) uint64 {
+	apply: func(h hashing.HashFunction, value any, seed uint64) uint64 {
 		v := value.(float32)
 		return h(unsafe.Pointer(&v), seed)
 	},
@@ -311,7 +316,7 @@ var hashFunctionsForFloat32 = hashFunctionsForType{
 
 var hashFunctionsForFloat64 = hashFunctionsForType{
 	typesDescr:      "f64",
-	implementations: []hashfunction{hashF64SM, hashF64MH},
+	implementations: []hashing.HashFunction{alternatives.HashF64SM, alternatives.HashF64MH},
 	samples: func(limit uint64) <-chan any {
 		ch := make(chan any, 8192)
 		go func() {
@@ -330,7 +335,7 @@ var hashFunctionsForFloat64 = hashFunctionsForType{
 		}()
 		return ch
 	},
-	apply: func(h hashfunction, value any, seed uint64) uint64 {
+	apply: func(h hashing.HashFunction, value any, seed uint64) uint64 {
 		v := value.(float64)
 		return h(unsafe.Pointer(&v), seed)
 	},
@@ -339,7 +344,7 @@ var hashFunctionsForFloat64 = hashFunctionsForType{
 
 var hashFunctionsForString = hashFunctionsForType{
 	typesDescr:      "str",
-	implementations: []hashfunction{hashString, hashStringWH, hashStringMH},
+	implementations: []hashing.HashFunction{hashing.HashString, alternatives.HashStringWH, alternatives.HashStringMH},
 	samples: func(limit uint64) <-chan any {
 		ch := make(chan any, 8192)
 		go func() {
@@ -362,7 +367,7 @@ var hashFunctionsForString = hashFunctionsForType{
 			ch <- string([]byte{0, 0})
 			count++
 			cprng := rtcompare.NewCPRNG(4096)
-			rng16 := xorshift16Star{state: cprng.Uint16() | 1} // non-zero random seed
+			rng16 := benchmarks.XorShift16Star{State: cprng.Uint16() | 1} // non-zero random seed
 			for range 1<<16 - 1 {
 				if count >= limit {
 					return
@@ -376,7 +381,7 @@ var hashFunctionsForString = hashFunctionsForType{
 			}
 			ch <- string([]byte{0, 0, 0})
 			count++
-			rng24 := xorshift24Star{state: cprng.Uint32() | 1} // non-zero random seed
+			rng24 := benchmarks.XorShift24Star{State: cprng.Uint32() | 1} // non-zero random seed
 			for range 1<<24 - 1 {
 				if count >= limit {
 					return
@@ -390,7 +395,7 @@ var hashFunctionsForString = hashFunctionsForType{
 			}
 			ch <- string([]byte{0, 0, 0, 0})
 			count++
-			rng32 := xorshift32Star{state: cprng.Uint32() | 1} // non-zero random seed
+			rng32 := benchmarks.XorShift32Star{State: cprng.Uint32() | 1} // non-zero random seed
 			for range limit - count {
 				// length between 0 and 100 inclusive
 				additional_length := cprng.Uint32N(96)
@@ -410,7 +415,7 @@ var hashFunctionsForString = hashFunctionsForType{
 		}()
 		return ch
 	},
-	apply: func(h hashfunction, value any, seed uint64) uint64 {
+	apply: func(h hashing.HashFunction, value any, seed uint64) uint64 {
 		v := value.(string)
 		return h(unsafe.Pointer(&v), seed)
 	},
@@ -604,8 +609,8 @@ func prepareResultMaps() (map[string][]float64, map[string][]float64) {
 // It looks up hf's runtime function name via reflect.ValueOf(hf).Pointer()
 // and runtime.FuncForPC, then strips the package/path prefix by returning
 // the substring after the final '.'; if no '.' is found the full name is returned.
-// hf is expected to be a function value of type hashfunction.
-func functionName(hf hashfunction) string {
+// hf is expected to be a function value of type hashing.HashFunction.
+func functionName(hf hashing.HashFunction) string {
 	fn := runtime.FuncForPC(reflect.ValueOf(hf).Pointer()).Name()
 	shortname := fn
 	if idx := strings.LastIndex(shortname, "."); idx != -1 {
@@ -627,8 +632,8 @@ func TestBucketMappingOfHashFunctionsForAllTypes(t *testing.T) {
 			shortname := functionName(hf)
 			rng := rtcompare.NewDPRNG(123456)
 			t.Run(hft.typesDescr+"/"+shortname, func(t *testing.T) {
-				for numGroups := range FilteredNumbers(numGroupSizes) {
-					if float64(numGroups) > float64(hft.cardinality)/set3maxAvgGroupLoad {
+				for numGroups := range benchmarks.FilteredNumbers(numGroupSizes) {
+					if float64(numGroups) > float64(hft.cardinality)/maxAvgGroupLoad {
 						t.Skipf("Hashing %d elements would never need %d groups or more.", hft.cardinality, numGroups)
 					}
 					elementsInSet := min(numGroups*groupSizeMultiplier, hft.cardinality)
@@ -1016,108 +1021,5 @@ func logAvalancheResults(t *testing.T, resultsMaxAbsDev map[string][]float64, re
 		}
 		sort.Float64s(v)
 		t.Logf("%s: maxAbsDevFrom0.5 median=%.6f, values={%.6f..%.6f}", name, rtcompare.QuickMedian(v), v[0], v[len(v)-1])
-	}
-}
-
-type xorshift16Star struct {
-	state uint16
-}
-
-func (x *xorshift16Star) Uint16() uint16 {
-	const mul = uint16(goldenRatio16) // Multiplier for xorshift16*
-	s := x.state
-	s ^= s << 7
-	s ^= s >> 9
-	s ^= s << 13
-	x.state = s
-	return s * mul
-}
-
-// This test checks that the period of xorshift16* is indeed 2^16-1
-func TestXorshift16StarPeriod(t *testing.T) {
-	if testing.Short() {
-		t.Skip("skipping xorshift16* period test in short mode")
-	}
-	x := xorshift16Star{state: 1}
-	for i := range uint64(1<<16 - 1) {
-		_ = x.Uint16()
-		if i == (1<<16)-3 || i == (1<<16)-2 || i == (1<<16)-1 {
-			t.Logf("xorshift16* period test reached iteration %d, val=%d", i+1, x.state)
-		}
-		if x.state == 1 && i != (1<<16)-2 {
-			t.Fatalf("the period of xorshift16* is not 2^16-1. state==1 @iteration=%d", i+1)
-		}
-	}
-	if x.state != 1 {
-		t.Fatalf("the period of xorshift16* is not 2^16-1. final state != initial state")
-	}
-}
-
-type xorshift24Star struct {
-	state uint32
-}
-
-func (x *xorshift24Star) Uint24() uint32 {
-	const mul uint32 = goldenRatio24 // multiplier for xorshift24*
-	mask := uint32((1 << 24) - 1)
-	s := x.state & mask
-	s ^= (s << 1) & mask
-	s ^= (s >> 5) & mask
-	s ^= (s << 18) & mask
-	x.state = s & mask
-	return (s * mul) & mask
-}
-
-// This test checks that the period of xorshift24* is indeed 2^24-1
-func TestXorshift24StarPeriod(t *testing.T) {
-	if testing.Short() {
-		t.Skip("skipping xorshift24* period test in short mode")
-	}
-	x := xorshift24Star{state: 1}
-	for i := range uint64(1<<24 - 1) {
-		_ = x.Uint24()
-		if i == (1<<24)-3 || i == (1<<24)-2 || i == (1<<24)-1 {
-			t.Logf("xorshift24* period test reached iteration %d, val=%d", i+1, x.state)
-		}
-		if x.state == 1 && i != (1<<24)-2 {
-			t.Fatalf("the period of xorshift24* is not 2^24-1. state==1 @iteration=%d", i+1)
-		}
-	}
-	if x.state != 1 {
-		t.Fatalf("the period of xorshift24* is not 2^24-1. final state != initial state")
-	}
-}
-
-type xorshift32Star struct {
-	state uint32
-}
-
-func (x *xorshift32Star) Uint32() uint32 {
-	const mul = uint32(goldenRatio32) // multiplier for xorshift32*
-	s := x.state
-	s ^= s << 13
-	s ^= s >> 17
-	s ^= s << 5
-	x.state = s
-	return s * mul
-}
-
-// This test checks that the period of xorshift32* is indeed 2^32-1
-func TestXorshift32StarPeriod(t *testing.T) {
-	if testing.Short() {
-		t.Skip("skipping xorshift32* period test in short mode")
-	}
-	x := xorshift32Star{state: 1}
-	for i := range 1<<32 - 1 {
-		_ = x.Uint32()
-		if i == (1<<32)-3 || i == (1<<32)-2 || i == (1<<32)-1 {
-			t.Logf("xorshift32* period test reached iteration %d, val=%d", i+1, x.state)
-		}
-		if x.state == 1 && i != (1<<32)-2 {
-			t.Fatalf("the period of xorshift32* is not 2^32-1. iteration=%d", i+1)
-		}
-	}
-	if x.state != 1 {
-		t.Fatalf("the period of xorshift32* is not 2^32-1. final state != initial state")
 	}
 }

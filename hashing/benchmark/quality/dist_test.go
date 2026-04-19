@@ -1,4 +1,4 @@
-package set3
+package quality
 
 import (
 	"math/bits"
@@ -6,6 +6,7 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/TomTonic/Set3/hashing"
 	"github.com/TomTonic/rtcompare"
 )
 
@@ -51,14 +52,14 @@ func TestDistributionQuality_SM_vs_WHdet_32bit(t *testing.T) {
 				for i := uint64(0); i < 1<<32; i++ {
 					u32 := uint32(i)
 
-					// SM path: same as hashI32SM
-					smV := goldenRatio32 * uint64(u32)
-					smH := splitmix64(smV ^ seed)
+					// SM path: same as HashI32SM
+					smV := hashing.GoldenRatio32 * uint64(u32)
+					smH := hashing.Splitmix64(smV ^ seed)
 					smHi, _ := bits.Mul64(smH, gc)
 					smBuckets[smHi]++
 
-					// WHdet path: same as hashI32WHdet
-					whH := wh32detGR(u32, seed)
+					// WHdet path: same as HashI32WHdet
+					whH := hashing.WH32DetGR(u32, seed)
 					whHi, _ := bits.Mul64(whH, gc)
 					whBuckets[whHi]++
 				}

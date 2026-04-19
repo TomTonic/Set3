@@ -1,4 +1,4 @@
-package set3
+package quality
 
 import (
 	"fmt"
@@ -11,12 +11,15 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/TomTonic/Set3/hashing"
+	"github.com/TomTonic/Set3/hashing/alternatives"
+	"github.com/TomTonic/Set3/hashing/benchmarks"
 	"github.com/TomTonic/rtcompare"
 )
 
 // rankCandidate32 describes one mixer+constant combination.
 // The widening step always multiplies uint32 -> uint64 using the candidate constant.
-// The mixer is then either splitmix64(seed^widened) or wh32detExtMul(widened, seed).
+// The mixer is then either hashing.Splitmix64(seed^widened) or alternatives.WH32DetExtMul(widened, seed).
 type rankCandidate32 struct {
 	mixerName string
 	constName string
@@ -127,12 +130,28 @@ func getGroupCountsSet3Rank() []uint32 {
 	return groupCountsSet3Rank
 }
 
+// calcReqNrOfGroupsLocal mirrors Set3's calcReqNrOfGroups using maxAvgGroupLoad.
+func calcReqNrOfGroupsLocal(reqCapa uint32) uint32 {
+	reqNrOfGroups := uint32((float64(reqCapa) + maxAvgGroupLoad - 1) / maxAvgGroupLoad)
+	if reqNrOfGroups <= 1 {
+		return 1
+	}
+	return reqNrOfGroups
+}
+
+// calcNextGroupCountLocal mirrors Set3's calcNextGroupCount growth formula.
+func calcNextGroupCountLocal(currentGroupCount uint32) uint32 {
+	n := uint32(max(math.Ceil(float64(currentGroupCount)*3.0/2.0), 2))
+	p := benchmarks.NextPrime(uint64(n))
+	return uint32(p)
+}
+
 func hashForCandidate32(c rankCandidate32, u uint32, seed uint64) uint64 {
 	widened := c.constant * uint64(u)
 	if c.useWH32 {
-		return wh32detExtMul(widened, seed)
+		return alternatives.WH32DetExtMul(widened, seed)
 	}
-	return splitmix64(seed ^ widened)
+	return hashing.Splitmix64(seed ^ widened)
 }
 
 // candidateSet32 returns all mixer+constant combinations to rank.
@@ -164,9 +183,9 @@ func candidateSet32() []rankCandidate32 {
 		name  string
 		value uint64
 	}{
-		{name: "goldenRatio32", value: goldenRatio32},
-		{name: "sqrt2_1_32", value: sqrt2_1_32},
-		{name: "pie7_32", value: pie7_32},
+		{name: "goldenRatio32", value: hashing.GoldenRatio32},
+		{name: "sqrt2_1_32", value: hashing.Sqrt2_1_32},
+		{name: "pie7_32", value: hashing.Pie7_32},
 		{name: "replication_0x0000000100000001", value: 0x0000000100000001},
 		{name: "largestPrime_0x00000000FFFFFFFB", value: 0x00000000FFFFFFFB},
 	}
@@ -187,17 +206,17 @@ func buildGroupCountsSet3Rank() []uint32 {
 	counts := make([]uint32, 0, groupCountRehashPrefix+groupCountRankCap)
 
 	// Mirror Set3's real growth sequence for early-to-mid table sizes.
-	usualStartNumber := nextPrime(uint64(calcReqNrOfGroups(21)))
+	usualStartNumber := benchmarks.NextPrime(uint64(calcReqNrOfGroupsLocal(21)))
 	current := uint32(usualStartNumber)
 	for range groupCountRehashPrefix {
 		counts = append(counts, current)
-		current = uint32(nextPrime(uint64(calcNextGroupCount(current))))
+		current = uint32(benchmarks.NextPrime(uint64(calcNextGroupCountLocal(current))))
 	}
 
 	// Add extra sizes from the filtered generator used in existing comparison tests.
-	for v := range FilteredNumbers(groupCountFilteredHint) {
+	for v := range benchmarks.FilteredNumbers(groupCountFilteredHint) {
 		// Normalize to prime counts to stay aligned with Set3's real table sizing.
-		counts = append(counts, uint32(nextPrime(uint64(v))))
+		counts = append(counts, uint32(benchmarks.NextPrime(uint64(v))))
 		if v >= groupCountFilteredMax {
 			break
 		}
