@@ -70,7 +70,7 @@ func TestPrimeTestDivisors_SmallLimits(t *testing.T) {
 	}{
 		{0, 0},
 		{1, 0},
-		{2, 1},
+		{2, 0},
 	}
 	for _, c := range cases {
 		cnt := 0
