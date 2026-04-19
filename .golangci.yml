@@ -1,0 +1,56 @@
+version: "2"
+
+run:
+  timeout: 3m
+
+linters:
+  default: none
+  enable:
+    - bodyclose
+    - errcheck
+    - gocritic
+    - gosec
+    - govet
+    - ineffassign
+    - misspell
+    - nakedret
+    - revive
+    - staticcheck
+    - unconvert
+    - unparam
+    - unused
+    - whitespace
+  settings:
+    govet:
+      enable:
+        - shadow
+    nakedret:
+      max-func-lines: 30
+    gocritic:
+      enabled-checks:
+        - appendCombine
+        - dupImport
+        - emptyStringTest
+        - equalFold
+        - hugeParam
+        - indexAlloc
+        - nestingReduce
+        - nilValReturn
+        - rangeExprCopy
+        - rangeValCopy
+        - sloppyReassign
+        - unnecessaryBlock
+
+  # TODO: Add project-specific exclusions here if needed.
+  # exclusions:
+  #   paths:
+  #     - generated/
+
+formatters:
+  enable:
+    - gofmt
+    - goimports
+
+issues:
+  max-issues-per-linter: 0
+  max-same-issues: 0
