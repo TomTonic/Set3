@@ -671,7 +671,7 @@ func TestSet3Subtract(t *testing.T) {
 func TestSet3Rehash(t *testing.T) {
 	data := genUint32Data(53)
 	set := FromArray(data)
-	initialExpectedGroups := int(nextPrime(uint64(calcReqNrOfGroups(uint32(len(data) * 7 / 5)))) ) //nolint:gosec
+	initialExpectedGroups := int(nextPrime(uint64(calcReqNrOfGroups(uint32(len(data) * 7 / 5))))) //nolint:gosec
 	assert.True(t, len(set.groupCtrl) == initialExpectedGroups, "set shall contain %d groups", initialExpectedGroups)
 	set.RehashToCapacity(200)
 	rehashToCapacityExpected := int(nextPrime(uint64(calcReqNrOfGroups(200))))
