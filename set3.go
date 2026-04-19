@@ -452,11 +452,12 @@ func (thisSet *Set3[T]) MutableRange() iter.Seq[T] {
 		for i, ctrl := range thisSet.groupCtrl {
 			if ctrl&set3hiBits != set3hiBits { // not all empty or deleted
 				slot := &(thisSet.groupSlot[i])
-				for i := range set3groupSize {
-					if isAnElementAt(ctrl, i) {
-						if !yield(slot[i]) {
-							return
-						}
+				elemMask := ^ctrl & set3hiBits
+				for elemMask != 0 {
+					s := bits.TrailingZeros64(elemMask) >> 3
+					elemMask &= elemMask - 1
+					if !yield(slot[s]) {
+						return
 					}
 				}
 			}
@@ -484,11 +485,12 @@ func (thisSet *Set3[T]) ImmutableRange() iter.Seq[T] {
 		for i, ctrl := range localCtrl {
 			if ctrl&set3hiBits != set3hiBits { // not all empty or deleted
 				slot := &(localSlot[i])
-				for i := range set3groupSize {
-					if isAnElementAt(ctrl, i) {
-						if !yield(slot[i]) {
-							return
-						}
+				elemMask := ^ctrl & set3hiBits
+				for elemMask != 0 {
+					s := bits.TrailingZeros64(elemMask) >> 3
+					elemMask &= elemMask - 1
+					if !yield(slot[s]) {
+						return
 					}
 				}
 			}
@@ -1126,38 +1128,38 @@ func (thisSet *Set3[T]) rehashToNumGroups(newNumGroups uint32) {
 		thisSet.groupCtrl[i] = set3AllEmpty
 	}
 	grpCnt := uint64(newNumGroups)
+	newGroupCtrl := thisSet.groupCtrl
+	newGroupSlot := thisSet.groupSlot
 	for oldGroupIndex := 0; oldGroupIndex < oldNumGroups; oldGroupIndex++ {
 		ctrl := oldGroupCtrl[oldGroupIndex]
 		if ctrl&set3hiBits == set3hiBits { // all positions empty or deleted
 			continue
 		}
-		for s := range set3groupSize {
-			if !isAnElementAt(ctrl, s) {
-				continue
-			}
+		elemMask := ^ctrl & set3hiBits
+		for elemMask != 0 {
+			s := bits.TrailingZeros64(elemMask) >> 3
+			elemMask &= elemMask - 1
 			elementToAdd := oldGroupSlot[oldGroupIndex][s]
 
 			// inlined and optimized Add implementation instead of Set3.Add(oldGroup.slot[s])
 			hash := thisSet.hashFunction.Hash(elementToAdd)
 			H2 := (hash & 0x0000_0000_0000_007f)
 			grpIdx := getGroupIndex(hash, uint64(newNumGroups))
-			stillSearchingSpace := true
-			for stillSearchingSpace {
+			for {
 				// optimization: as the element comes from a set, we know it cannot already be
 				// in thisSet, so skip searching for the hashcode and start searching for
 				// an empty slot immediately
-				matches := set3ctlrMatchEmpty(thisSet.groupCtrl[grpIdx])
-
+				matches := set3ctlrMatchEmpty(newGroupCtrl[grpIdx])
 				if matches != 0 {
 					// empty spot -> element can't be in Set3 (see Contains) -> insert
-					s := set3nextMatch(&matches)
-					thisSet.groupCtrl[grpIdx] = setCTRLat(thisSet.groupCtrl[grpIdx], H2, s)
-					thisSet.groupSlot[grpIdx][s] = elementToAdd
+					slot := bits.TrailingZeros64(matches) >> 3
+					newGroupCtrl[grpIdx] = setCTRLat(newGroupCtrl[grpIdx], H2, slot)
+					newGroupSlot[grpIdx][slot] = elementToAdd
 					thisSet.resident++
-					stillSearchingSpace = false
+					break
 				}
 				grpIdx++ // carousel through all groups
-				if grpIdx >= grpCnt {
+				if grpIdx == grpCnt {
 					grpIdx = 0
 				}
 			}
