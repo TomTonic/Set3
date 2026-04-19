@@ -1097,10 +1097,8 @@ func (thisSet *Set3[T]) RehashToCapacity(newCapacity uint32) {
 
 func (thisSet *Set3[T]) rehashToNumGroups(newNumGroups uint32) {
 	oldNumGroups := len(thisSet.groupCtrl)
-	oldGroupCtrl := make([]uint64, oldNumGroups)
-	oldGroupSlot := make([][set3groupSize]T, oldNumGroups)
-	copy(oldGroupCtrl, thisSet.groupCtrl)
-	copy(oldGroupSlot, thisSet.groupSlot)
+	oldGroupCtrl := thisSet.groupCtrl
+	oldGroupSlot := thisSet.groupSlot
 
 	thisSet.hashFunction.Seed = uint64((rand.Uint64() & 0xFFFFFFFFFFFFFFE) + 1) // new seed, make sure seed is not zero
 	thisSet.groupCtrl = make([]uint64, newNumGroups)
