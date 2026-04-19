@@ -58,7 +58,7 @@ func TestDistributionQuality_SM_vs_WHdet_32bit(t *testing.T) {
 					smBuckets[smHi]++
 
 					// WHdet path: same as hashI32WHdet
-					whH := wh32det(u32, seed)
+					whH := wh32detGR(u32, seed)
 					whHi, _ := bits.Mul64(whH, gc)
 					whBuckets[whHi]++
 				}

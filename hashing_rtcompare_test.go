@@ -25,7 +25,7 @@ func testHashUint32WHdet(rng *rtcompare.DPRNG, seed, count uint64) uint64 {
 	var sum uint64
 	for range count {
 		u32 := uint32(rng.Uint64())
-		sum ^= wh32det(u32, seed)
+		sum ^= wh32detGR(u32, seed)
 	}
 	return sum
 }

@@ -65,13 +65,37 @@ func wh32detExtMul(val uint64, seed uint64) uint64 {
 	return e
 }
 
-// wh32det is a deterministic variant of wh32 that does not use random keys.
-func wh32det(val uint32, seed uint64) uint64 {
+// wh32detGR is a deterministic variant of wh32 that does not use random keys.
+// Widening multiplication is done inside the function using the golden ratio constant,
+// which performed best in our benchmarks for the full 2^32 input range.
+func wh32detGR(val uint32, seed uint64) uint64 {
 	a := goldenRatio32 * uint64(val)
 	b := a ^ p1
 	c := a ^ seed
 	d := mix(b, c)
 	e := mix(m5^4, d) // m5^4 is from wyhash, but its a constant here, so just keep it
+	return e
+}
+
+// wh16detExtMul is the external-widening variant of wh16det, analogous to wh32detExtMul.
+// The widening multiplication must be done BEFORE this function is called;
+// this function exists to allow testing different widening constants.
+func wh16detExtMul(val uint64, seed uint64) uint64 {
+	a := val
+	b := a ^ p1
+	c := a ^ seed
+	d := mix(b, c)
+	e := mix(m5^2, d) // m5^2 mirrors the wh16 constant (2 bytes of input)
+	return e
+}
+
+// wh16det is a deterministic variant of wh16 that does not use random keys.
+func wh16det(val uint16, seed uint64) uint64 {
+	a := 0x0001_0001_0001_0001 * uint64(val)
+	b := a ^ p1
+	c := a ^ seed
+	d := mix(b, c)
+	e := mix(m5^2, d) // m5^2 mirrors the wh16 constant
 	return e
 }
 
