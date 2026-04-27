@@ -23,6 +23,8 @@ type RuntimeHasher[K comparable] struct {
 // Hash computes the hash for key k using the stored runtime function
 // and seed. The key pointer is wrapped with [Noescape] to avoid heap
 // allocation during hashing.
+//
+//go:inline
 func (h *RuntimeHasher[K]) Hash(k K) uint64 {
 	p := Noescape(unsafe.Pointer(&k)) //nolint:gosec
 	return h.fn(p, h.Seed)

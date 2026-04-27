@@ -42,6 +42,8 @@ const (
 // Returns a mask indicating which slots in the control word m match the
 // given h2 value. For each matching slot in m, the corresponding byte
 // in the result is 0x80; otherwise, it is 0x00.
+//
+//go:inline
 func set3ctlrMatchH2(m uint64, h uint64) uint64 {
 	return set3hasZeroByte(m ^ (set3loBits * h))
 }
@@ -49,6 +51,8 @@ func set3ctlrMatchH2(m uint64, h uint64) uint64 {
 // Returns a mask indicating which slots in the control word m are empty.
 // For each empty slot in m, the corresponding byte in the result is 0x80;
 // otherwise, it is 0x00.
+//
+//go:inline
 func set3ctlrMatchEmpty(m uint64) uint64 {
 	return set3hasZeroByte(m ^ set3hiBits)
 }
@@ -70,6 +74,8 @@ func set3nextMatch(b *uint64) int {
 // Returns a mask indicating which bytes in x are zero.
 // For each byte in x that is zero, the corresponding byte in the result
 // is 0x80; otherwise, it is 0x00.
+//
+//go:inline
 func set3hasZeroByte(x uint64) uint64 {
 	return ((x - set3loBits) & ^(x)) & set3hiBits
 }

@@ -11,6 +11,8 @@ import (
 // It consumes 8-byte words with LittleEndian decoding and mixes each
 // block through splitmix64; the tail (0..7 bytes) is folded in and the
 // length is incorporated to avoid collisions for different-length inputs.
+//
+//go:inline
 func HashBytesBlock(seed uint64, b []byte) uint64 {
 	h := seed ^ P0
 	i, n := 0, len(b)
@@ -76,6 +78,8 @@ func HashAsByteArray[K comparable](p unsafe.Pointer, seed uint64) uint64 {
 // HashString hashes a Go string by reading its bytes directly through
 // pointer arithmetic, avoiding slice creation and the function-call
 // overhead of HashBytesBlock.
+//
+//go:inline
 func HashString(p unsafe.Pointer, seed uint64) uint64 {
 	s := *(*string)(p)
 	n := len(s)

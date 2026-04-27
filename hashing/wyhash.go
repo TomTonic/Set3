@@ -19,6 +19,8 @@ const P3 = 0xf33958e37006e5ed
 // Mix performs a 128-bit widening multiplication of a and b and returns
 // the XOR of the high and low 64-bit halves. This is the core mixing
 // step of the WyHash family.
+//
+//go:inline
 func Mix(a, b uint64) uint64 {
 	hi, lo := bits.Mul64(a, b)
 	return hi ^ lo
@@ -33,6 +35,8 @@ func Mix(a, b uint64) uint64 {
 // standard library. It is an optimized version especially crafted for hashing
 // 64 bit values for this hashset implementation. Please note that it is NOT bit
 // compatible with wyhash; e.g., it depends on the endianness of the platform.
+//
+//go:inline
 func WH64Det(val uint64, seed uint64) uint64 {
 	a := val
 	b := bits.RotateLeft64(a, 32) // swap the upper and lower 32 bits
@@ -46,6 +50,8 @@ func WH64Det(val uint64, seed uint64) uint64 {
 // WH32DetGR is a deterministic variant of wh32 that does not use random keys.
 // Widening multiplication is done inside the function using the golden ratio constant,
 // which performed best in our benchmarks for the full 2^32 input range.
+//
+//go:inline
 func WH32DetGR(val uint32, seed uint64) uint64 {
 	a := GoldenRatio32 * uint64(val)
 	b := a ^ P1
