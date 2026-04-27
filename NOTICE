@@ -1,6 +1,6 @@
 github.com/TomTonic/Set3
 
-Copyright 2024 TomTonic
+Copyright 2024-2026 TomTonic
 
 This product includes code derived from the Dolthub, Inc. (https://www.dolthub.com/)
 SwissMap port of absl::flat_hash_map, and Google Inc.
