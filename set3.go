@@ -57,6 +57,15 @@ func set3ctlrMatchEmpty(m uint64) uint64 {
 	return set3hasZeroByte(m ^ set3hiBits)
 }
 
+// Returns a mask indicating which slots in the control word m are deleted.
+// For each deleted slot in m, the corresponding byte in the result is 0x80;
+// otherwise, it is 0x00.
+//
+//go:inline
+func set3ctlrMatchDeleted(m uint64) uint64 {
+	return set3hasZeroByte(m ^ (set3loBits * set3Deleted))
+}
+
 // Returns the byte number of the next set bit in b (starting from LSB).
 // Designed to be used with the result of set3ctlrMatchH2 or set3ctlrMatchEmpty:
 // each byte in b is either 0x00 or 0x80; thus, after matching Empty or the
@@ -266,7 +275,6 @@ func (thisSet *Set3[T]) Contains(element T) bool {
 	for {
 		ctrl := groupCtrl[currentGroupIndex]
 		H2matches := set3ctlrMatchH2(ctrl, H2)
-		emptyMatches := set3ctlrMatchEmpty(ctrl)
 		if H2matches != 0 {
 			slot := &(groupSlot[currentGroupIndex])
 			for H2matches != 0 {
@@ -281,7 +289,10 @@ func (thisSet *Set3[T]) Contains(element T) bool {
 		}
 		// |key| is not in group |g|,
 		// stop probing if we see an empty slot
-		if emptyMatches != 0 {
+		// Fast-path: only groups with at least one high bit can contain
+		// Empty/Deleted control bytes. Fully occupied groups can skip
+		// the Empty check entirely.
+		if ctrl&set3hiBits != 0 && set3ctlrMatchEmpty(ctrl) != 0 {
 			// there is an empty slot - the element, if it had been added, hat either
 			// been found until now or it had been added in the next empty spot -
 			// well, this is the next empty spot...
@@ -543,7 +554,11 @@ func (thisSet *Set3[T]) Add(element T) {
 	groupCtrl := thisSet.groupCtrl
 	groupSlot := thisSet.groupSlot
 	groupCount := uint64(len(groupCtrl))
+	_ = groupSlot[groupCount-1] // bounds-check elimination hint
 	currentGroupIndex := getGroupIndex(hash, groupCount)
+	firstDeletedGroup := uint64(0)
+	firstDeletedSlot := 0
+	hasFirstDeleted := false
 	for {
 		ctrl := groupCtrl[currentGroupIndex]
 		H2matches := set3ctlrMatchH2(ctrl, H2)
@@ -561,12 +576,28 @@ func (thisSet *Set3[T]) Add(element T) {
 			}
 		}
 
+		if !hasFirstDeleted {
+			deletedMatches := set3ctlrMatchDeleted(ctrl)
+			if deletedMatches != 0 {
+				hasFirstDeleted = true
+				firstDeletedGroup = currentGroupIndex
+				firstDeletedSlot = bits.TrailingZeros64(deletedMatches) >> 3
+			}
+		}
+
 		// element is not in group,
 		// stop probing if we see an empty slot
 		emptyMatches := set3ctlrMatchEmpty(ctrl)
 
 		if emptyMatches != 0 {
 			// empty spot -> element can't be in thisSet (see Contains) -> insert
+			if hasFirstDeleted {
+				ctrlDeleted := groupCtrl[firstDeletedGroup]
+				groupCtrl[firstDeletedGroup] = setCTRLat(ctrlDeleted, H2, firstDeletedSlot)
+				groupSlot[firstDeletedGroup][firstDeletedSlot] = element
+				thisSet.dead--
+				return
+			}
 
 			// set s to the next match, i.e. the index of the next matching slot (starting from the LSB)
 			s := bits.TrailingZeros64(emptyMatches) >> 3 // returns the number of consecutive zero bits starting from the least-significant bit (LSB), e.g., for b=0b0010_1000, it returns 3
