@@ -25,7 +25,7 @@ type RuntimeHasher[K comparable] struct {
 // allocation during hashing.
 //
 //go:inline
-func (h *RuntimeHasher[K]) Hash(k K) uint64 {
+func (h RuntimeHasher[K]) Hash(k K) uint64 {
 	p := Noescape(unsafe.Pointer(&k)) //nolint:gosec
 	return h.fn(p, h.Seed)
 }
