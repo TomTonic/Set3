@@ -83,6 +83,34 @@ go test -v -count=1 -run "^(TestSet3Fill|TestNativeMapFill|TestSet3Find|TestNati
 (Raw benchmark results are available [in plain text](https://raw.githubusercontent.com/TomTonic/Set3/main/benchresult.txt). Go version 1.23.1, no PGO.
 Please note that you have to comment out the instructions to skip the tests first (`t.Skip("...")`). The whole benchmark runs about 45 minutes.)
 
+### Profile-Guided Optimization
+
+`Set3` picks its hash function once, when the set is created, and stores it as a
+function value. Calling it is therefore an indirect call that the compiler
+cannot resolve on its own, and for small keys that call is a noticeable part of
+the work: hashing a `uint64` costs about 1 ns, the indirect call about 0.8 ns on
+top.
+
+[Profile-guided optimization](https://go.dev/doc/pgo) removes it. With a profile
+that covers the hot path, the compiler replaces the indirect call with a guarded
+direct call, which is then inlinable:
+
+```text
+./hashing/hasher.go:41:13: PGO devirtualizing function call hashing.h.fn to hashing.HashI64WHdet
+```
+
+Measured on `Set3[uint64]` (AMD Ryzen 9 7900, Go 1.26.8):
+
+| Benchmark              | no PGO    | with PGO  |       |
+| ---------------------- | --------- | --------- | ----- |
+| `Contains`             | 8.07 ns   | 6.77 ns   | -16%  |
+| `Add` (1000 elements)  | 9406 ns   | 8327 ns   | -11%  |
+
+PGO is applied by the binary being built, not by this library, so the win is
+yours to collect: record a CPU profile of your application under a realistic
+load, drop it in your main package as `default.pgo`, and rebuild. Nothing in
+`Set3` needs to change.
+
 ### Inserting Nodes into an Empty Set
 
 The following chart illustrates the time required to insert random uint64 values into newly allocated sets.
