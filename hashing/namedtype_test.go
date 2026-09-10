@@ -76,3 +76,20 @@ func BenchmarkPlainU64(b *testing.B) {
 	}
 	benchSink = s
 }
+
+// benchFallbackKey is deliberately not handled by any specialized path: the
+// interface field forces GenerateHashFunction to bail out, so the maphash
+// fallback is used.
+type benchFallbackKey struct {
+	A uint64
+	B any
+}
+
+func BenchmarkFallbackMaphashPath(b *testing.B) {
+	h := MakeRuntimeHasher[benchFallbackKey](0x1234)
+	var s uint64
+	for i := 0; b.Loop(); i++ {
+		s += h.Hash(benchFallbackKey{A: uint64(i), B: i})
+	}
+	benchSink = s
+}

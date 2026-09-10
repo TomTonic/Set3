@@ -52,6 +52,11 @@ func HashBytesBlock(seed uint64, b []byte) uint64 {
 
 // HashByteSlice hashes a []uint8 (alias []byte) by delegating to the
 // byte-block hashing routine. This avoids per-element overhead.
+//
+// [MakeRuntimeHasher] never selects this function: slice types do not
+// satisfy the comparable constraint, so K can never be a slice. It is
+// exported for callers that hash byte slices directly, and p must point to
+// a slice header, not to the bytes themselves.
 func HashByteSlice(p unsafe.Pointer, seed uint64) uint64 {
 	b := *(*[]uint8)(p)
 	return HashBytesBlock(seed, b)
@@ -123,18 +128,19 @@ func HashString(p unsafe.Pointer, seed uint64) uint64 {
 	return WH64Det(tail^uint64(n)*P2, h)
 }
 
-// HashFallbackMaphash is the generic fallback hasher which uses
-// stdlib `hash/maphash` to hash arbitrary comparable types by calling
-// `maphash.WriteComparable`. This is slower than the specialized
-// routines but works for any K.
+// HashFallbackMaphash is the generic fallback hasher which uses stdlib
+// `hash/maphash` to hash arbitrary comparable types by calling
+// `maphash.Comparable`. This is slower than the specialized routines but
+// works for any K, including interface types whose dynamic type is only
+// known per value.
+//
+// It panics if K is an interface type holding a value that is not
+// comparable, which mirrors the behaviour of == on such a value.
 func HashFallbackMaphash[K comparable](p unsafe.Pointer, seed uint64) uint64 {
 	// Safely dereference the comparable type K from the pointer.
 	// Audited: p points to a valid K instance.
 	k := *(*K)(p) //nolint:gosec
-	var mh maphash.Hash
-	mh.SetSeed(SeedToMaphashSeed(seed))
-	maphash.WriteComparable(&mh, k)
-	return mh.Sum64()
+	return maphash.Comparable(SeedToMaphashSeed(seed), k)
 }
 
 // SeedToMaphashSeed derives a deterministic maphash.Seed from a
