@@ -552,8 +552,6 @@ func hashByteBlock32(p unsafe.Pointer, seed uint64) uint64 {
 // ── Inline hash helpers ─────────────────────────────────────────────────────
 
 // hashFloat32Inline hashes a float32 value with ±0 and NaN canonicalization.
-//
-//go:inline
 func hashFloat32Inline(p unsafe.Pointer, seed uint64) uint64 {
 	f := *(*float32)(p)
 	var bits uint32
@@ -570,8 +568,6 @@ func hashFloat32Inline(p unsafe.Pointer, seed uint64) uint64 {
 }
 
 // hashFloat64Inline hashes a float64 value with ±0 and NaN canonicalization.
-//
-//go:inline
 func hashFloat64Inline(p unsafe.Pointer, seed uint64) uint64 {
 	f := *(*float64)(p)
 	var bits uint64
@@ -590,8 +586,6 @@ func hashFloat64Inline(p unsafe.Pointer, seed uint64) uint64 {
 
 // hashComplex64 hashes a complex64 value by canonicalizing and hashing
 // both float32 components and combining the results.
-//
-//go:inline
 func hashComplex64(p unsafe.Pointer, seed uint64) uint64 {
 	c := *(*complex64)(p)
 	r, i := real(c), imag(c)
@@ -601,8 +595,6 @@ func hashComplex64(p unsafe.Pointer, seed uint64) uint64 {
 
 // hashComplex128 hashes a complex128 value by canonicalizing and hashing
 // both float64 components and combining the results.
-//
-//go:inline
 func hashComplex128(p unsafe.Pointer, seed uint64) uint64 {
 	c := *(*complex128)(p)
 	r, i := real(c), imag(c)
@@ -612,8 +604,6 @@ func hashComplex128(p unsafe.Pointer, seed uint64) uint64 {
 
 // canonicalF32Bits returns the IEEE-754 bit representation of f after
 // canonicalizing ±0 → +0 and all NaN → a single canonical NaN.
-//
-//go:inline
 func canonicalF32Bits(f float32) uint32 {
 	switch {
 	case f == 0:
@@ -627,8 +617,6 @@ func canonicalF32Bits(f float32) uint32 {
 
 // canonicalF64Bits returns the IEEE-754 bit representation of f after
 // canonicalizing ±0 → +0 and all NaN → a single canonical NaN.
-//
-//go:inline
 func canonicalF64Bits(f float64) uint64 {
 	switch {
 	case f == 0:

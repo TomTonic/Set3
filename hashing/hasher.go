@@ -10,6 +10,19 @@ import (
 // Implementations must treat the memory at the pointer as the concrete
 // representation of the value and incorporate the seed to allow
 // deterministic re-seeding.
+//
+// Implementations must satisfy two contracts:
+//
+//   - Equal values must hash equally. If a == b then the function must
+//     return the same value for both, for every seed.
+//   - The pointer must not be retained. [RuntimeHasher.Hash] hides it from
+//     escape analysis with [Noescape] so that the key stays on the caller's
+//     stack. An implementation that stores p, or anything derived from it,
+//     beyond the duration of the call creates a dangling pointer that the
+//     compiler cannot catch. Read through p, return, keep nothing.
+//
+// [HashBool] deliberately ignores the seed: with only two possible values a
+// seeded hash gains nothing, so reseeding a set of bools is a no-op.
 type HashFunction func(unsafe.Pointer, uint64) uint64
 
 // RuntimeHasher holds a per-type runtime hash function and a seed.
@@ -23,18 +36,31 @@ type RuntimeHasher[K comparable] struct {
 // Hash computes the hash for key k using the stored runtime function
 // and seed. The key pointer is wrapped with [Noescape] to avoid heap
 // allocation during hashing.
-//
-//go:inline
 func (h RuntimeHasher[K]) Hash(k K) uint64 {
 	p := Noescape(unsafe.Pointer(&k)) //nolint:gosec
 	return h.fn(p, h.Seed)
 }
 
 // MakeRuntimeHasher chooses an efficient per-type hash function for the
-// generic type parameter K. It first matches common concrete types in a
-// type switch (fast path) and falls back to reflect-based inspection for
-// named slices/arrays. The returned RuntimeHasher contains the provided
+// generic type parameter K. The returned RuntimeHasher contains the provided
 // seed and the selected hash function.
+//
+// Selection happens once, at construction time, in this order:
+//
+//  1. Interface types (reflect.TypeOf yields nil) use the maphash fallback,
+//     which resolves the dynamic type per value.
+//  2. Types whose kind is a primitive get a dedicated hasher. Dispatch is by
+//     kind rather than by concrete type, so named types such as
+//     "type UserID uint64" take the same fast path as uint64.
+//  3. Layouts that are safe to hash as a raw byte block (no padding, no
+//     floats, no blank fields) use [HashAsByteArray].
+//  4. Everything else is handed to [GenerateHashFunction], which builds a
+//     reflection-free closure for structs and arrays containing floats,
+//     strings or padding.
+//  5. Types that generator cannot handle, such as structs with interface
+//     fields, use the maphash fallback.
+//
+// No reflection happens at hash time on any of these paths.
 func MakeRuntimeHasher[K comparable](seed uint64) RuntimeHasher[K] {
 	h := RuntimeHasher[K]{Seed: seed}
 	var zero K
