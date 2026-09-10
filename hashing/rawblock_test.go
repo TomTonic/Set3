@@ -1,4 +1,3 @@
-// nolint:gosec // Test file: intentional unsafe.Pointer use for testing byte hashing
 package hashing
 
 import (
@@ -208,8 +207,8 @@ func TestMakeRuntimeHasher_DoesNotUseRawByteHasherForFloatStruct(t *testing.T) {
 	if h.fn(p0, seed) != h.fn(pNeg0, seed) {
 		t.Fatalf("+0 and -0 produced different hashes: %#x vs %#x", h.fn(p0, seed), h.fn(pNeg0, seed))
 	}
-	// Determinism.
-	if h.fn(p0, seed) != h.fn(p0, seed) {
+	// Determinism: the repeated call is the point, not a copy-paste slip.
+	if h.fn(p0, seed) != h.fn(p0, seed) { //nolint:staticcheck // SA4000
 		t.Fatalf("non-deterministic")
 	}
 	// Different values must differ.

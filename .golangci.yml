@@ -1,7 +1,12 @@
+---
 version: "2"
 
 run:
   timeout: 3m
+  # lab/ is only visible with this tag. Pass --build-tags=set3lab (or rely on
+  # this list) so the experiment code is linted too instead of silently rotting.
+  build-tags:
+    - set3lab
 
 linters:
   default: none
@@ -41,10 +46,35 @@ linters:
         - sloppyReassign
         - unnecessaryBlock
 
-  # TODO: Add project-specific exclusions here if needed.
-  # exclusions:
-  #   paths:
-  #     - generated/
+  exclusions:
+    rules:
+      # lab/ holds experiments and measurement harnesses behind the set3lab
+      # build tag (see lab/README.md). It has to compile, pass vet, and stay
+      # correct, but the style rules that keep the published API tidy are not
+      # worth the churn on a benchmark driver.
+      - path: ^lab/
+        linters:
+          - gocritic
+          - gosec
+          - revive
+          - staticcheck
+          - unconvert
+          - unparam
+          - whitespace
+
+      # hashgen builds hash closures from reflect metadata. Every conversion
+      # gosec flags here is a struct field offset or size that the Go type
+      # system already bounds, and the unsafe.Pointer arithmetic is the point
+      # of the package.
+      - path: ^hashing/(hashgen|bytehash|rawblock|hasher|primitives)\.go$
+        linters:
+          - gosec
+        text: "G(103|115)"
+
+      # Test files reach into unexported state and use math/rand on purpose.
+      - path: _test\.go$
+        linters:
+          - gosec
 
 formatters:
   enable:

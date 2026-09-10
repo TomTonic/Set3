@@ -1,4 +1,3 @@
-// nolint:gosec // All unsafe operations below are audited: field offsets are computed via reflect at init time.
 package hashing
 
 import (

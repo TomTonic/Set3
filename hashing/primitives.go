@@ -34,7 +34,10 @@ func SwirlByte(p unsafe.Pointer, seed uint64) uint64 {
 // HashBool always returns one of two fixed hash values for false and true.
 // This is not a good general hash function, but it is well suited the
 // specific use case of hashing boolean values in a hash set.
-func HashBool(p unsafe.Pointer, seed uint64) uint64 {
+//
+// The seed is ignored: with two possible inputs there is nothing to hide, and
+// the parameter only exists to satisfy [HashFunction].
+func HashBool(p unsafe.Pointer, _ uint64) uint64 {
 	b := *(*bool)(p)
 	if b {
 		return 0x1111_1111_1111_1111

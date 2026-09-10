@@ -1,4 +1,3 @@
-// nolint:gosec // Test file: intentional unsafe.Pointer use and weak RNG for deterministic testing
 package hashing
 
 import (

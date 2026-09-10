@@ -11,10 +11,12 @@ const M5 = 0x1d8e4e27c47d124f
 
 // P0, P1, P2, P3 are four primes between 2^63 and 2^64 used as mixing
 // keys in the WyHash family of hash functions.
-const P0 = 0xbefff2bb2ab34c2b
-const P1 = 0xf20a3e5e0b7b9731
-const P2 = 0xe834f7294373147d
-const P3 = 0xf33958e37006e5ed
+const (
+	P0 = 0xbefff2bb2ab34c2b
+	P1 = 0xf20a3e5e0b7b9731
+	P2 = 0xe834f7294373147d
+	P3 = 0xf33958e37006e5ed
+)
 
 // Mix performs a 128-bit widening multiplication of a and b and returns
 // the XOR of the high and low 64-bit halves. This is the core mixing

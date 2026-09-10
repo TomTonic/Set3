@@ -1,4 +1,3 @@
-// nolint:gosec // All unsafe operations below are audited and safe for low-level byte hashing
 package hashing
 
 import (

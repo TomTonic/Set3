@@ -1,21 +1,52 @@
 # AI Agent Guidelines
 
-<!-- TODO: Customize this file for your project. -->
-
 ## Project Overview
 
-This is a Go project. All source code is in Go. The project uses Go modules
-for dependency management.
+Set3 is a Go set implementation built on the Abseil "Swiss table" layout, not
+on `map[T]struct{}`. It is a single-module Go project with no build steps
+beyond the Go tool.
+
+```text
+set3.go            the library: the Set3 type and every operation on it
+set3_test.go       behaviour tests   set3_tombstone_test.go  probe-chain tests
+set3_fuzz_test.go  fuzz targets
+hashing/           hash function selection and the per-type hash routines
+internal/prime/    the primality search that sizes the control table
+lab/               experiments and long-running measurements
+```
+
+## The lab/ directory
+
+`lab/` holds experimental hash functions, benchmark harnesses, and test suites
+that run for tens of minutes to hours. Every file there starts with
+
+```go
+//go:build set3lab
+```
+
+so the Go tool ignores it unless the tag is passed. This is deliberate: the
+everyday build and test cycle must stay fast, but the code must stay compiled,
+linted, and runnable. Do not delete experiment code to "clean up" — move it to
+`lab/` and tag it. Do not un-tag anything in `lab/`. See `lab/README.md`.
 
 ## Build & Test Commands
 
 ```bash
-go build ./...          # Build
-go test ./...           # Run tests
+go build ./...          # Build (lab/ excluded)
+go test ./...           # Run tests (seconds)
 go test ./... -race     # Run tests with race detector
 go test ./... -cover    # Run tests with coverage
-golangci-lint run       # Run linter (uses .golangci.yml)
+golangci-lint run       # Run linter — covers lab/ too, the tag is in .golangci.yml
+
+go build -tags set3lab ./...            # compile lab/ as well
+go test -tags set3lab -short ./lab/...  # run every lab suite, cheap paths only
+go test -tags set3lab ./lab/...         # the full experiments: hours
 ```
+
+`go vet ./...` reports one known finding, `unsafeptr` in
+`hashing/hasher.go`. That line is the pointer-laundering idiom `Noescape` exists
+for; golangci-lint has it suppressed with a reason. Use `golangci-lint run`
+rather than bare `go vet`.
 
 ## Code Style
 
@@ -45,25 +76,19 @@ guidance** than a pure specification:
 Example:
 
 ```go
-// DistanceForStrings computes the Levenshtein edit distance between
-// source and target.
+// EmptyWithCapacity creates a new, empty Set3 with room for at least
+// initialCapacity elements.
 //
-// Both source and target must be provided as []rune slices to ensure
-// correct handling of multi-byte Unicode characters. Use []rune(s) to
-// convert a plain string.
+// initialCapacity is a hint, not a limit: the set grows on demand, it
+// just rehashes on the way. Pass the number of elements you expect to
+// add when you know it, and the set never rehashes while filling.
 //
-// The op parameter controls insertion, deletion, and substitution costs
-// as well as an optional custom match function. Use DefaultOptions for
-// standard unit costs or DefaultOptionsWithSub for unit-cost
-// substitutions.
+// Returns a set that is ready to use; there is no error case.
 //
-// Returns the minimum number of edit operations needed to transform
-// source into target under the given cost model.
-//
-// Typical usage is fuzzy string matching, typo detection, or computing
-// similarity scores (see also RatioForStrings for a normalized 0–1
-// score). For a full edit script, use EditScriptForStrings instead.
-func DistanceForStrings(source, target []rune, op Options) int { ... }
+// Use this over Empty whenever the size is known up front — filling a
+// set that starts at the default capacity of 21 rehashes several times.
+// To resize a set that already holds elements, see Set3.RehashToCapacity.
+func EmptyWithCapacity[T comparable](initialCapacity uint32) *Set3[T] { ... }
 ```
 
 Unexported helpers do not require full documentation, but a one-line
@@ -73,7 +98,7 @@ comment explaining *why* the helper exists is expected.
 
 - All new functionality must include tests.
 - Use table-driven tests where appropriate.
-- Maintain at least 80% test coverage.
+- Maintain at least 98% statement coverage; the coverage workflow enforces it.
 - Run `go test ./... -race` before submitting changes.
 - Fuzz tests are welcome for functions that parse external input.
 
@@ -91,16 +116,20 @@ Structure the comment in this order:
 Example:
 
 ```go
-// TestPruneKeepsLatestHourly verifies that the backup pruning logic
-// retains exactly one backup per hour for the most recent 24 hours,
-// ensuring users never lose their latest hourly snapshot.
+// TestAddReusesTombstoneWithoutBreakingOverflowProbe verifies that a set
+// still finds every element it contains after elements have been removed
+// and new ones added in their place — the case where a naive Swiss table
+// silently loses entries.
 //
-// This test covers the core retention algorithm in the pruning package.
+// This covers the probe-chain handling in Set3.Add, which may reuse the
+// slot of a deleted element only when doing so cannot cut a probe chain
+// that a later element depends on.
 //
-// It sets up a directory with multiple backups within the same hour and
-// asserts that only the chronologically latest entry survives while the
-// others are moved to the "to_delete" directory.
-func TestPruneKeepsLatestHourly(t *testing.T) { ... }
+// It builds a group whose slots all map to the same start bucket, removes
+// one element from the middle of the chain, adds a new element that lands
+// in the freed slot, and asserts that every remaining element is still
+// found.
+func TestAddReusesTombstoneWithoutBreakingOverflowProbe(t *testing.T) { ... }
 ```
 
 For table-driven tests, document the overall test function with the
@@ -117,7 +146,7 @@ that reads as an assertion (e.g. `"returns error for empty input"`).
 ## Dependencies
 
 - Minimize external dependencies.
-- All dependencies are managed via Renovate (see `renovate.json`).
+- All dependencies are managed via Renovate (see `.github/renovate.json`).
 - Run `go mod tidy` after adding or removing dependencies.
 - Do not add dependencies with known vulnerabilities.
 
@@ -130,14 +159,23 @@ that reads as an assertion (e.g. `"returns error for empty input"`).
 
 ## CI/CD
 
-- All pushes and PRs are checked by: golangci-lint, go vet, go test, CodeQL.
-- Coverage is tracked via gist-based badges.
+- Every push is checked by: golangci-lint, the test/coverage run, the fuzz
+  targets, CodeQL, and dependency review.
+- Coverage is tracked via badges pushed to the `badges` branch.
+- `lab/` is built, vetted and smoke-tested weekly by `.github/workflows/lab.yml`,
+  and on demand via workflow_dispatch. Nothing else compiles it, so that job is
+  the only thing standing between the experiments and bit rot.
 - Dependency updates are automated via Renovate with automerge for patches
   and minor updates.
-- Vulnerabilities are scanned daily via grype_me.
+- OpenSSF Scorecard runs weekly.
 
 ## File Organization
 
-- Keep the top-level package clean; use subdirectories for internal packages.
+- Keep the repository root minimal. `set3.go` and its test files are the only
+  Go files that belong there; everything else goes into a subpackage.
 - Test files live next to the code they test (`foo_test.go` next to `foo.go`).
-- Generated code goes in clearly marked directories excluded from linting.
+- Experimental code, benchmark drivers, and suites that run longer than a few
+  seconds belong in `lab/` behind the `set3lab` build tag, never in the
+  default build.
+- Community files (`CONTRIBUTING.md`, `SECURITY.md`) and tool configuration
+  that GitHub accepts there live in `.github/`.

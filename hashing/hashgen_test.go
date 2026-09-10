@@ -1,4 +1,3 @@
-// nolint:gosec // Test file: intentional unsafe.Pointer use for testing generated hash functions
 package hashing
 
 import (

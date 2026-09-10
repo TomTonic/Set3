@@ -13,16 +13,9 @@
 // All mathematical constants used across the hashing strategy (golden ratio,
 // sqrt(2)-1, (pi+e)/7 series at various bit widths) are defined here as a
 // coherent reference set. Production code uses a subset; the remaining
-// constants are provided for the alternative implementations in
-// [github.com/TomTonic/Set3/hashing/alternatives] and for comparison
-// testing in [github.com/TomTonic/Set3/hashing/benchmark/quality].
+// constants exist for the candidates and comparison suites under lab/.
 //
-// Alternative and experimental hash functions live in
-// [github.com/TomTonic/Set3/hashing/alternatives].
-// Shared benchmark utilities live in
-// [github.com/TomTonic/Set3/hashing/benchmarks].
-// Hash quality and distribution tests live in
-// [github.com/TomTonic/Set3/hashing/benchmark/quality].
-// Runtime performance comparisons live in
-// [github.com/TomTonic/Set3/hashing/benchmark/performance].
+// The hash functions that were considered and rejected, and the suites that
+// measure distribution quality and runtime against them, live under lab/ and
+// are compiled only with the set3lab build tag. See lab/README.md.
 package hashing

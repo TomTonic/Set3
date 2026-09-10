@@ -1,0 +1,52 @@
+---
+name: "Lab (experiments)"
+
+# lab/ is compiled out of the normal build by the set3lab build tag, so nothing
+# there is covered by the other workflows. This job exists to make sure it does
+# not rot: it builds, vets, and runs every lab suite in -short mode once a week
+# and on demand.
+on:
+  schedule:
+    - cron: "17 4 * * 1"
+  workflow_dispatch:
+    inputs:
+      full:
+        description: "Run the lab suites without -short (hours, not minutes)"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  lab:
+    name: build, vet and smoke-test lab/
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - name: Harden Runner
+        uses: step-security/harden-runner@df199fb7be9f65074067a9eb93f12bb4c5547cf2 # v2.13.3
+        with:
+          egress-policy: audit
+
+      - name: Checkout code
+        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
+
+      - name: Setup Go
+        uses: actions/setup-go@4dc6199c7b1a012772edbd06daecab0f50c9053c # v6.1.0
+        with:
+          go-version-file: go.mod
+
+      - name: Build with the lab tag
+        run: go build -tags set3lab ./...
+
+      - name: Vet with the lab tag
+        run: go vet -tags set3lab ./lab/...
+
+      - name: Run lab suites (short)
+        if: ${{ github.event_name != 'workflow_dispatch' || !inputs.full }}
+        run: go test -tags set3lab -short -timeout 60m ./lab/...
+
+      - name: Run lab suites (full)
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.full }}
+        run: go test -tags set3lab -timeout 480m ./lab/...

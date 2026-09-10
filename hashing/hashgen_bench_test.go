@@ -1,4 +1,3 @@
-// nolint:gosec // All unsafe operations below are audited: field offsets are computed via reflect at init time.
 package hashing
 
 import (
@@ -50,6 +49,8 @@ type benchLargeStruct struct {
 
 // sink prevents dead-code elimination.
 var benchSink uint64
+
+var benchMapSink struct{}
 
 type benchOps4 = genOps4
 type benchOps5 = genOps5
@@ -235,7 +236,7 @@ func BenchmarkHashGen_NativeMap_FloatStruct(b *testing.B) {
 	m[v] = struct{}{}
 	b.ResetTimer()
 	for range b.N {
-		_, _ = m[v]
+		benchMapSink = m[v]
 	}
 }
 
@@ -246,7 +247,7 @@ func BenchmarkHashGen_NativeMap_Mixed(b *testing.B) {
 	m[v] = struct{}{}
 	b.ResetTimer()
 	for range b.N {
-		_, _ = m[v]
+		benchMapSink = m[v]
 	}
 }
 

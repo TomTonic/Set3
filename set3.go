@@ -12,6 +12,29 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+/*
+Package set3 implements a set as a flat, open-addressed hash table.
+
+Unlike most set implementations in Go, Set3 does not wrap map[T]struct{}.
+It is a Go port of the "Fast, Efficient, Cache-friendly Hash Table" from
+Abseil, Google's C++ library, derived from SwissMap. Elements are stored in
+groups of eight, each group guarded by a single 64-bit control word that holds
+one 7-bit hash fragment per slot, so a whole group is probed with a couple of
+integer operations and no SIMD instructions.
+
+The result is 10%-30% faster than map[T]struct{} at about 25% less memory.
+[Set3.RehashToCapacity] lets a caller trade one against the other explicitly.
+
+Start with [Empty], [EmptyWithCapacity], [From], or [FromArray]; every other
+operation is a method on [Set3]. The set operations that combine two sets
+([Set3.Unite], [Set3.Intersect], [Set3.Subtract]) return a new set and leave
+their operands untouched, while the Add and Remove methods modify the receiver
+in place.
+
+Hashing is provided by [github.com/TomTonic/Set3/hashing], which picks a hash
+function per element type when the set is created. A Set3 is not safe for
+concurrent modification.
+*/
 package set3
 
 import (
@@ -23,6 +46,7 @@ import (
 	"strings"
 
 	"github.com/TomTonic/Set3/hashing"
+	"github.com/TomTonic/Set3/internal/prime"
 )
 
 const (
@@ -148,7 +172,7 @@ Example:
 */
 func EmptyWithCapacity[T comparable](initialCapacity uint32) *Set3[T] {
 	reqNrOfGroups := calcReqNrOfGroups(initialCapacity)
-	nrOfGroups := nextPrime(uint64(reqNrOfGroups))
+	nrOfGroups := groupCountFor(reqNrOfGroups)
 	result := &Set3[T]{
 		hashFunction: hashing.MakeRuntimeHasher[T](randomSeed()),
 		groupCtrl:    make([]uint64, nrOfGroups),
@@ -168,7 +192,19 @@ func EmptyWithCapacity[T comparable](initialCapacity uint32) *Set3[T] {
 // treats it as "uninitialized" and substitutes a fixed constant, which would
 // make the seed non-random for the maphash fallback path.
 func randomSeed() uint64 {
-	return rand.Uint64() | 1
+	// gosec: this seeds hashing, not cryptography; a CSPRNG would only cost time.
+	return rand.Uint64() | 1 //nolint:gosec
+}
+
+// groupCountFor returns the number of groups to allocate for reqNrOfGroups:
+// the next prime at or above it. A prime group count is what makes the
+// modulo-free index reduction in getGroupIndex spread the high hash bits.
+//
+// gosec: the result always fits in a uint32. reqNrOfGroups is derived from a
+// uint32 capacity divided by set3maxAvgGroupLoad, so it never exceeds ~6.6e8,
+// and the next prime above that is far below 2^32.
+func groupCountFor(reqNrOfGroups uint32) uint32 {
+	return uint32(prime.Next(uint64(reqNrOfGroups))) //nolint:gosec
 }
 
 func calcReqNrOfGroups(reqCapa uint32) uint32 {
@@ -339,7 +375,7 @@ func getGroupIndex(hash, groupCount uint64) uint64 {
 }
 
 /*
-Returns true if thisSet contains all elements from thatSet.
+ContainsAll returns true if thisSet contains all elements from thatSet.
 
 If thatSet is empty, ContainsAll returns true. If thatSet is nil, ContainsAll returns true.
 
@@ -372,7 +408,7 @@ func (thisSet *Set3[T]) ContainsAll(thatSet *Set3[T]) bool {
 }
 
 /*
-Returns true if thisSet contains all of the given argument values.
+ContainsAllOf returns true if thisSet contains all of the given argument values.
 
 If the number of arguments is zero, ContainsAllOf returns true.
 
@@ -398,7 +434,7 @@ func (thisSet *Set3[T]) ContainsAllOf(args ...T) bool {
 }
 
 /*
-Returns true if thisSet contains all elements from the given data array.
+ContainsAllFromArray returns true if thisSet contains all elements from the given data array.
 
 If the length of data is zero, ContainsAllFromArray returns true. If data is nil, ContainsAllFromArray returns true.
 
@@ -424,7 +460,7 @@ func (thisSet *Set3[T]) ContainsAllFromArray(data []T) bool {
 }
 
 /*
-Returns true if thisSet and thatSet have the same size and contain the same elements.
+Equals returns true if thisSet and thatSet have the same size and contain the same elements.
 
 If thatSet is nil, Equals returns true if and only if thisSet is empty.
 
@@ -457,7 +493,7 @@ func (thisSet *Set3[T]) Equals(thatSet *Set3[T]) bool {
 }
 
 /*
-Iterates over all elements in thisSet.
+MutableRange iterates over all elements in thisSet.
 
 Caution: If thisSet is changed during the iteration, the result is unpredictable. So if you want to add or remove elements to or from thisSet during the itration, choose [ImmutableRange].
 
@@ -486,7 +522,7 @@ func (thisSet *Set3[T]) MutableRange() iter.Seq[T] {
 }
 
 /*
-Iterates over all elements in thisSet.
+ImmutableRange iterates over all elements in thisSet.
 
 Makes an internal copy of the stored elements first, so you can add or remove elements to or from thisSet during the itration, for example. To avoid this extra copy, e.g., for performance reasons, choose [MutableRange].
 
@@ -539,7 +575,7 @@ func (thisSet *Set3[T]) ToArray() []T {
 }
 
 /*
-Inserts the element into thisSet if it is not yet in thisSet.
+Add inserts the element into thisSet if it is not yet in thisSet.
 
 Example:
 
@@ -607,7 +643,6 @@ func (thisSet *Set3[T]) Add(element T) {
 			groupSlot[currentGroupIndex][s] = element
 			thisSet.resident++
 			return
-
 		}
 		currentGroupIndex++ // carousel through all groups
 		if currentGroupIndex == groupCount {
@@ -617,7 +652,7 @@ func (thisSet *Set3[T]) Add(element T) {
 }
 
 /*
-Inserts all elements from thatSet that are not yet in thisSet into thisSet.
+AddAll inserts all elements from thatSet that are not yet in thisSet into thisSet.
 
 If thatSet is nil, nothing is added to thisSet.
 
@@ -641,7 +676,7 @@ func (thisSet *Set3[T]) AddAll(thatSet *Set3[T]) {
 }
 
 /*
-Inserts all parameter values that are not yet in thisSet into thisSet.
+AddAllOf inserts all parameter values that are not yet in thisSet into thisSet.
 
 If the number of parameters is zero, nothing is added to thisSet.
 
@@ -662,7 +697,7 @@ func (thisSet *Set3[T]) AddAllOf(args ...T) {
 }
 
 /*
-Inserts all elements from the given data array that are not yet in thisSet into thisSet.
+AddAllFromArray inserts all elements from the given data array that are not yet in thisSet into thisSet.
 
 If data is nil, nothing is added to thisSet.
 
@@ -683,7 +718,7 @@ func (thisSet *Set3[T]) AddAllFromArray(data []T) {
 }
 
 /*
-Creates a new Set3 as a mathematical union of the elements from thisSet and thatSet.
+Unite creates a new Set3 as a mathematical union of the elements from thisSet and thatSet.
 
 If thatSet is nil, Unite returns a clone of thisSet.
 
@@ -721,18 +756,8 @@ func setCTRLat(ctrl, val uint64, pos int) uint64 {
 	return ctrl
 }
 
-// Returns true if at position pos in ctrl an actual element is stored
-// (i.e., neither set3Empty nor set3Deleted)
-func isAnElementAt(ctrl uint64, pos int) bool {
-	shift := pos << 3               // *8
-	ctrl &= (uint64(0x80) << shift) // clear all other bits
-	// if a bit is set, the according byte represented either set3Empty or set3Deleted
-	// -> if ctlr is 0 now, the according position stores a value
-	return ctrl == 0
-}
-
 /*
-Removes the given element from thisSet if it is in thisSet, returns whether or not the element was in thisSet.
+Remove removes the given element from thisSet if it is in thisSet, returns whether or not the element was in thisSet.
 
 Example:
 
@@ -806,7 +831,7 @@ func (thisSet *Set3[T]) Remove(element T) bool {
 }
 
 /*
-Removes all elements from thisSet that are in thatSet.
+RemoveAll removes all elements from thisSet that are in thatSet.
 
 If thatSet is nil, nothing happens.
 
@@ -831,7 +856,7 @@ func (thisSet *Set3[T]) RemoveAll(thatSet *Set3[T]) {
 }
 
 /*
-Removes all elements from thisSet that are passed as arguments.
+RemoveAllOf removes all elements from thisSet that are passed as arguments.
 
 If no arguments are passed, nothing happens.
 
@@ -853,7 +878,7 @@ func (thisSet *Set3[T]) RemoveAllOf(args ...T) {
 }
 
 /*
-Removes all elements from thisSet that are in the data array.
+RemoveAllFromArray removes all elements from thisSet that are in the data array.
 
 If data is nil, nothing happens.
 
@@ -875,7 +900,7 @@ func (thisSet *Set3[T]) RemoveAllFromArray(data []T) {
 }
 
 /*
-Creates a new Set3 as a mathematical difference between thisSet and thatSet. The result is a new Set3 that contains elements that are in thisSet but not in thatSet.
+Subtract creates a new Set3 as a mathematical difference between thisSet and thatSet. The result is a new Set3 that contains elements that are in thisSet but not in thatSet.
 
 If thatSet is nil, Subtract returns a clone of thisSet.
 
@@ -929,7 +954,7 @@ func (thisSet *Set3[T]) Clear() {
 }
 
 /*
-Creates a new Set3 as a mathematical intersection between this and that. The result is a new Set3 that contains elements that are in both sets.
+Intersect creates a new Set3 as a mathematical intersection between this and that. The result is a new Set3 that contains elements that are in both sets.
 
 If thatSet is nil, Intersect returns an empty Set3.
 
@@ -971,7 +996,7 @@ func (thisSet *Set3[T]) Intersect(thatSet *Set3[T]) *Set3[T] {
 }
 
 /*
-Creates a new Set3 as a mathematical intersection between thisSet and the elements of the data array. The result is a new Set3.
+IntersectWithArray creates a new Set3 as a mathematical intersection between thisSet and the elements of the data array. The result is a new Set3.
 
 If data is nil, IntersectWithArray returns an empty Set3.
 
@@ -1006,7 +1031,7 @@ func (thisSet *Set3[T]) IntersectWithArray(data []T) *Set3[T] {
 }
 
 /*
-Checks if thisSet contains any element that is also present in thatSet. This function also provides a quick way to check if two Set3 are disjoint (i.e. !ContainsAny).
+ContainsAny checks if thisSet contains any element that is also present in thatSet. This function also provides a quick way to check if two Set3 are disjoint (i.e. !ContainsAny).
 
 Returns false if thatSet is nil.
 
@@ -1046,7 +1071,7 @@ func (thisSet *Set3[T]) ContainsAny(thatSet *Set3[T]) bool {
 }
 
 /*
-Checks if thisSet contains any of the given argument values.
+ContainsAnyOf checks if thisSet contains any of the given argument values.
 
 Returns false if the number of arguments is zero.
 
@@ -1071,7 +1096,7 @@ func (thisSet *Set3[T]) ContainsAnyOf(args ...T) bool {
 }
 
 /*
-Checks if thisSet contains any element fromthe given data array.
+ContainsAnyFromArray checks if thisSet contains any element from the given data array.
 
 Returns false if data is nil.
 
@@ -1112,12 +1137,11 @@ func (thisSet *Set3[T]) Size() uint32 {
 
 func calcNextGroupCount(currentGroupCount uint32) uint32 {
 	n := uint32(max(math.Ceil(float64(currentGroupCount)*3.0/2.0), 2))
-	p := nextPrime(uint64(n))
-	return uint32(p)
+	return groupCountFor(n)
 }
 
 /*
-Rorganizes the backend of thisSet for optimal space efficiency: This call rehashes thisSet to a size matching its current element count.
+Rehash reorganizes the backend of thisSet for optimal space efficiency: This call rehashes thisSet to a size matching its current element count.
 
 Example:
 
@@ -1128,13 +1152,11 @@ Example:
 	set.Rehash() // saves memory consumed by set
 */
 func (thisSet *Set3[T]) Rehash() {
-	reqNumGroups := calcReqNrOfGroups(thisSet.Size()) //nolint:gosec
-	numGroups := nextPrime(uint64(reqNumGroups))
-	thisSet.rehashToNumGroups(uint32(numGroups))
+	thisSet.rehashToNumGroups(groupCountFor(calcReqNrOfGroups(thisSet.Size())))
 }
 
 /*
-Rorganizes the backend of thisSet: RehashToCapacity redistributs the elements of thisSet onto a new hashset in its backend, e.g., to ensure faster element access.
+RehashToCapacity reorganizes the backend of thisSet: RehashToCapacity redistributes the elements of thisSet onto a new hashset in its backend, e.g., to ensure faster element access.
 
 If newSize is smaller than the current number of elements in thisSet, this function does nothing. If newSize is equal to the current number of elements in thisSet, this function does the same as [Rehash].
 
@@ -1150,9 +1172,7 @@ func (thisSet *Set3[T]) RehashToCapacity(newCapacity uint32) {
 	if newCapacity < thisSet.Size() {
 		return
 	}
-	reqNumGroups := calcReqNrOfGroups(newCapacity)
-	newNumGroups := nextPrime(uint64(reqNumGroups))
-	thisSet.rehashToNumGroups(uint32(newNumGroups))
+	thisSet.rehashToNumGroups(groupCountFor(calcReqNrOfGroups(newCapacity)))
 }
 
 func (thisSet *Set3[T]) rehashToNumGroups(newNumGroups uint32) {

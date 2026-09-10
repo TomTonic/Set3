@@ -1,3 +1,4 @@
+---
 name: Fuzz Tests
 on: [push]
 
@@ -12,33 +13,30 @@ jobs:
   fuzz:
     runs-on: ubuntu-latest
     steps:
-    - name: Harden Runner
-      uses: step-security/harden-runner@df199fb7be9f65074067a9eb93f12bb4c5547cf2 # v2.13.3
-      with:
-        egress-policy: audit
+      - name: Harden Runner
+        uses: step-security/harden-runner@df199fb7be9f65074067a9eb93f12bb4c5547cf2 # v2.13.3
+        with:
+          egress-policy: audit
 
-    - name: Checkout Repository
-      uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
+      - name: Checkout Repository
+        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
 
-    - name: Setup Go
-      uses: actions/setup-go@4dc6199c7b1a012772edbd06daecab0f50c9053c # v6.1.0
-      with:
-        go-version-file: go.mod
+      - name: Setup Go
+        uses: actions/setup-go@4dc6199c7b1a012772edbd06daecab0f50c9053c # v6.1.0
+        with:
+          go-version-file: go.mod
 
-    - name: Checkout code
-      uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
-
-    - name: All Fuzz Tests
-      working-directory: .
-      run: |
-        files=$(grep -r --include='**_test.go' --files-with-matches 'func Fuzz' .)
-        for file in ${files}
-        do
-            funcs=$(grep -oP 'func \K(Fuzz\w*)' $file)
-            for func in ${funcs}
-            do
-                echo "Fuzzing $func in $file"
-                parentDir=$(dirname $file)
-                go test $parentDir -run=$func -fuzz=$func -fuzztime=5s
-            done
-        done
+      - name: All Fuzz Tests
+        working-directory: .
+        run: |
+          files=$(grep -r --include='**_test.go' --files-with-matches 'func Fuzz' .)
+          for file in ${files}
+          do
+              funcs=$(grep -oP 'func \K(Fuzz\w*)' $file)
+              for func in ${funcs}
+              do
+                  echo "Fuzzing $func in $file"
+                  parentDir=$(dirname $file)
+                  go test $parentDir -run=$func -fuzz=$func -fuzztime=5s
+              done
+          done

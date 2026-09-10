@@ -2,7 +2,7 @@
 
 [![Go Report Card](https://goreportcard.com/badge/github.com/TomTonic/Set3)](https://goreportcard.com/report/github.com/TomTonic/Set3)
 [![Go Reference](https://pkg.go.dev/badge/github.com/TomTonic/Set3.svg)](https://pkg.go.dev/github.com/TomTonic/Set3)
-[![Linter](https://github.com/TomTonic/Set3/actions/workflows/linter.yml/badge.svg)](https://github.com/TomTonic/Set3/actions/workflows/linter.yml)
+[![Linter](https://github.com/TomTonic/Set3/actions/workflows/lint.yml/badge.svg)](https://github.com/TomTonic/Set3/actions/workflows/lint.yml)
 [![Tests](https://github.com/TomTonic/Set3/actions/workflows/coverage.yml/badge.svg?branch=main)](https://github.com/TomTonic/Set3/actions/workflows/coverage.yml)
 ![coverage](https://raw.githubusercontent.com/TomTonic/Set3/badges/.badges/main/coverage.svg)
 [![OpenSSF Best Practices](https://www.bestpractices.dev/projects/9470/badge)](https://www.bestpractices.dev/projects/9470)
@@ -16,7 +16,7 @@ adaptability is unattainable with implementations based on `map[type]struct{}`, 
 The code is derived from [SwissMap](https://github.com/dolthub/swiss) and it implements the "Fast, Efficient, Cache-friendly Hash Table" found in [Abseil](https://abseil.io/blog/20180927-swisstables).
 For details on the algorithm see the [CppCon 2017 talk by Matt Kulukundis](https://www.youtube.com/watch?v=ncHmEUmJZf4).
 The dependency on x86 assembler for [SSE2/SSE3](https://en.wikipedia.org/wiki/Streaming_SIMD_Extensions) instructions has been removed for portability and speed; the code runs faster without SSE and the necessary additional stack frame.
-As hash function, Set3 uses the original hash function from `map[type]struct{}` via [dolthub/maphash](https://github.com/dolthub/maphash).
+Hashing is done by the [`hashing`](hashing) package, which picks a hash function per element type when a set is created and falls back to Go's own `hash/maphash` for types it has no specialised routine for.
 
 The name "Set3" comes from the fact that this was the 3rd attempt for an optimized datastructure/code-layout to get the best runtime performance.
 
@@ -72,16 +72,40 @@ func TestExample(t *testing.T) {
 }
 ```
 
+## Repository layout
+
+```text
+set3.go            the library — the Set3 type and every operation on it
+hashing/           hash function selection and the per-type hash routines
+internal/prime/    the primality search that sizes the control table
+lab/               experiments and long-running measurements (see lab/README.md)
+```
+
+Everything under `lab/` is compiled out by default. It carries the `set3lab`
+build tag, so `go build ./...` and `go test ./...` do not see it at all:
+
+```sh
+go test ./...                          # the library — seconds
+go test -tags set3lab -short ./lab/... # the experiments too — minutes
+```
+
+The linter is configured with the tag on, so the experiment code is still
+checked on every run and cannot rot unnoticed. `lab/README.md` explains what
+lives there and how to run each suite for real.
+
 ## Performance
 
 The following benchmarks have been performed with [v0.4.0](https://github.com/TomTonic/Set3/releases/tag/v0.4.0) to compare `Set3[uint64]` with `map[uint64]struct{}` with the command:
 
 ```sh
-go test -v -count=1 -run "^(TestSet3Fill|TestNativeMapFill|TestSet3Find|TestNativeMapFind)$" github.com/TomTonic/Set3 -timeout=120m > benchresult.txt
+go test -tags set3lab -v -count=1 -timeout=120m \
+  -run "^(TestSet3Fill|TestNativeMapFill|TestSet3Find|TestNativeMapFind)$" \
+  ./lab/setbench > lab/results/benchresult.txt
 ```
 
-(Raw benchmark results are available [in plain text](https://raw.githubusercontent.com/TomTonic/Set3/main/benchresult.txt). Go version 1.23.1, no PGO.
-Please note that you have to comment out the instructions to skip the tests first (`t.Skip("...")`). The whole benchmark runs about 45 minutes.)
+(Raw benchmark results are available [in plain text](lab/results/benchresult.txt). Go version 1.23.1, no PGO.
+Please note that you have to comment out the instructions to skip the tests first (`t.Skip("...")`). The whole benchmark runs about 45 minutes.
+The benchmark lives behind a build tag — see [lab/README.md](lab/README.md).)
 
 ### Profile-Guided Optimization
 
@@ -105,6 +129,12 @@ Measured on `Set3[uint64]` (AMD Ryzen 9 7900, Go 1.26.8):
 | ---------------------- | --------- | --------- | ----- |
 | `Contains`             | 8.07 ns   | 6.77 ns   | -16%  |
 | `Add` (1000 elements)  | 9406 ns   | 8327 ns   | -11%  |
+
+PGO removes the indirect call itself. The call *frame* around it is a separate
+matter and is already gone: `RuntimeHasher.Hash` is written as a single
+expression so that its inline cost stays inside the compiler's budget and it
+gets inlined into `Contains`, `Add` and `Remove`. See the note on `Hash` in
+[`hashing/hasher.go`](hashing/hasher.go) before reformatting it.
 
 PGO is applied by the binary being built, not by this library, so the win is
 yours to collect: record a CPU profile of your application under a realistic
