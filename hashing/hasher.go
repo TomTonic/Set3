@@ -81,6 +81,15 @@ func MakeRuntimeHasher[K comparable](seed uint64) RuntimeHasher[K] {
 		// fall back to reflect-based inspection for more cases
 		t := reflect.TypeOf(zero)
 		switch {
+		case t == nil:
+			// K is an interface type. Since Go 1.20 ordinary interface types
+			// satisfy the comparable constraint, so K may legitimately be
+			// any or a named interface. The zero value is a nil interface,
+			// for which reflect.TypeOf returns nil, so no static layout
+			// analysis is possible: dispatch has to happen per value at
+			// hash time. maphash handles this (and panics for dynamic types
+			// that are not comparable, matching the behaviour of ==).
+			h.fn = HashFallbackMaphash[K]
 		case t.Kind() == reflect.Slice && t.Elem().Kind() == reflect.Uint8:
 			// subtle difference: []byte (but with different declared element type) -> use slice handler
 			h.fn = HashByteSlice
