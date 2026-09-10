@@ -22,17 +22,51 @@ func setTestHashFunction[K comparable](set *Set3[K], fn hashing.HashFunction) {
 	(*testRuntimeHasher[K])(unsafe.Pointer(&set.hashFunction)).Fn = fn
 }
 
-// findHashForGroupAndH2 finds a hash value that maps to targetGroup while
+// findHashForGroupAndH2 returns a hash value that maps to targetGroup while
 // keeping the lower 7 bits equal to h2.
+//
+// getGroupIndex reduces a hash with bits.Mul64(hash, groupCount) and keeps the
+// high 64 bits, i.e. floor(hash*groupCount / 2^64). The hashes mapping to
+// group g therefore form the contiguous range
+//
+//	ceil(g*2^64/groupCount) <= hash < ceil((g+1)*2^64/groupCount)
+//
+// so the value can be computed directly. Scanning upwards from a small hash in
+// steps of 0x80 does not work: with two groups, reaching group 1 requires a
+// hash of at least 2^63, which is roughly 2^56 iterations away.
 func findHashForGroupAndH2(groupCount, targetGroup, h2 uint64) uint64 {
 	if h2 == 0 || h2 > 0x7f {
 		panic("h2 must be in range 1..127")
 	}
-	for h := h2; ; h += 0x80 {
-		if getGroupIndex(h, groupCount) == targetGroup {
-			return h
-		}
+	if targetGroup >= groupCount {
+		panic("targetGroup must be less than groupCount")
 	}
+
+	// Lowest hash that maps to targetGroup.
+	lowest := ceilShift64(targetGroup, groupCount)
+
+	// Round up to the next hash whose lower 7 bits are h2.
+	h := (lowest &^ 0x7f) | h2
+	if h < lowest {
+		h += 0x80
+	}
+
+	if getGroupIndex(h, groupCount) != targetGroup {
+		// Only reachable if a group spans fewer than 128 hash values, i.e.
+		// groupCount > 2^57. Set3 never allocates anywhere near that.
+		panic("no hash with the requested H2 maps to the requested group")
+	}
+	return h
+}
+
+// ceilShift64 returns ceil(num * 2^64 / den). num must be less than den, which
+// is what keeps the quotient inside 64 bits.
+func ceilShift64(num, den uint64) uint64 {
+	quo, rem := bits.Div64(num, 0, den)
+	if rem != 0 {
+		quo++
+	}
+	return quo
 }
 
 // findElementSlot scans the table and returns the group/slot for key.
@@ -220,6 +254,12 @@ func FuzzTombstoneReuseProbeChain(f *testing.F) {
 			set.Add(newKey)
 			present[newKey] = struct{}{}
 
+			// The freshly inserted key takes the slot of the one just removed,
+			// so the pool keeps referring to keys that are actually present.
+			// Without this, cycles > len(removePool) would wrap around and try
+			// to remove a key that was deleted earlier and never re-added.
+			removePool[i%len(removePool)] = newKey
+
 			require.True(t, set.Contains(overflowKey), "overflow key must remain reachable")
 			require.False(t, set.Contains(removeKey), "removed key must stay absent")
 			for k := range present {
@@ -358,6 +398,14 @@ func FuzzTombstoneReuseMultiBucket(f *testing.F) {
 				alloc(uint8(b), newKey) //nolint:gosec
 				set.Add(newKey)
 				present[newKey] = struct{}{}
+
+				// The freshly inserted key takes the slot of the one just
+				// removed, so the pool keeps referring to keys that are
+				// actually present. Without this, cycles beyond
+				// len(removePool) would select already-removed keys and the
+				// stillPresent guard above would skip the removal entirely,
+				// leaving most of the churn loop doing no work at all.
+				bm.removePool[i%len(bm.removePool)] = newKey
 
 				// verify invariants after each churn step
 				require.True(t, set.Contains(bm.overflowKey),
