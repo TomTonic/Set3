@@ -48,18 +48,6 @@ func HashBytesBlock(seed uint64, b []byte) uint64 {
 	return WH64Det(tail^uint64(n)*P2, h)
 }
 
-// HashByteSlice hashes a []uint8 (alias []byte) by delegating to the
-// byte-block hashing routine. This avoids per-element overhead.
-//
-// [MakeRuntimeHasher] never selects this function: slice types do not
-// satisfy the comparable constraint, so K can never be a slice. It is
-// exported for callers that hash byte slices directly, and p must point to
-// a slice header, not to the bytes themselves.
-func HashByteSlice(p unsafe.Pointer, seed uint64) uint64 {
-	b := *(*[]uint8)(p)
-	return HashBytesBlock(seed, b)
-}
-
 // HashAsByteArray handles fixed-size raw-byte-eligible values (for example
 // [N]byte or structs with byte-stable equality semantics) by viewing their
 // memory as a []byte slice and hashing it directly. Hot fixed sizes are
