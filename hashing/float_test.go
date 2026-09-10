@@ -173,3 +173,72 @@ func TestHashCanonicalizedFloat64_InfIsNotTreatedAsNaN(t *testing.T) {
 		t.Fatalf("+Inf and -Inf must not hash equal under bit-hash: +Inf=%#x -Inf=%#x", hPos, hNeg)
 	}
 }
+
+// TestHashF32SMCanonicalizesZeroAndNaN verifies that a set of float32 values
+// obeys Go's equality rules rather than IEEE-754 bit patterns.
+//
+// HashF32SM is the hash routine MakeRuntimeHasher picks for a bare float32 key.
+// Go says +0 == -0, so a set must never hold both; Go says NaN != NaN, so a NaN
+// can never be looked up again, but every NaN encoding still has to land in the
+// same bucket or a set that collects NaNs degenerates into one bucket per
+// encoding.
+//
+// It hashes +0 against -0 and several NaN encodings against each other and
+// requires equal results, then requires ordinary values -- including the
+// infinities, which are not NaN -- to hash differently.
+func TestHashF32SMCanonicalizesZeroAndNaN(t *testing.T) {
+	const seed = uint64(0xF00DF00D)
+	hash := func(f float32) uint64 { return HashF32SM(unsafe.Pointer(&f), seed) }
+
+	posZero, negZero := float32(0), float32(math.Copysign(0, -1))
+	if math.Float32bits(posZero) == math.Float32bits(negZero) {
+		t.Fatal("test is vacuous: +0 and -0 have the same bit pattern")
+	}
+	if hash(posZero) != hash(negZero) {
+		t.Fatalf("+0 and -0 are equal in Go but hash differently: %#x vs %#x",
+			hash(posZero), hash(negZero))
+	}
+
+	nans := []float32{
+		math.Float32frombits(0x7FC00000), // canonical quiet NaN
+		math.Float32frombits(0x7FC00001), // quiet NaN, different payload
+		math.Float32frombits(0x7F800001), // signalling NaN
+		math.Float32frombits(0xFFC00000), // negative NaN
+	}
+	want := hash(nans[0])
+	for _, n := range nans[1:] {
+		if got := hash(n); got != want {
+			t.Fatalf("NaN %#x hashes to %#x, canonical NaN to %#x", math.Float32bits(n), got, want)
+		}
+	}
+
+	for _, f := range []float32{1, -1, 3.5, float32(math.Inf(1)), float32(math.Inf(-1))} {
+		if hash(f) == hash(posZero) {
+			t.Fatalf("%v hashes like zero", f)
+		}
+		if hash(f) == want {
+			t.Fatalf("%v hashes like NaN; only actual NaNs may be canonicalized", f)
+		}
+	}
+}
+
+// TestHashF32SMRespondsToTheSeed verifies that rehashing a set of float32 keys
+// actually moves them.
+//
+// Set3 draws a new seed on every rehash to break up whatever collision pattern
+// forced it. A routine that ignored the seed for some class of values -- zero
+// and NaN take a separate path through the canonicalization switch and are easy
+// to get wrong here -- would keep those values colliding forever.
+//
+// It hashes ordinary, zero and NaN values under two seeds and requires each pair
+// to differ.
+func TestHashF32SMRespondsToTheSeed(t *testing.T) {
+	for _, f := range []float32{0, float32(math.Copysign(0, -1)), 1.25,
+		float32(math.NaN()), float32(math.Inf(1))} {
+		a := HashF32SM(unsafe.Pointer(&f), 1)
+		b := HashF32SM(unsafe.Pointer(&f), 2)
+		if a == b {
+			t.Fatalf("hash of %v ignores the seed: %#x", f, a)
+		}
+	}
+}

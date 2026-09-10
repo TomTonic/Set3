@@ -41,8 +41,41 @@ func Next(n uint64) uint64 {
 // number of trial divisions for numbers up to 2^32.
 var primesUnder64k = [6542]uint16{}
 
+// lastPrimeUnder64k is the final entry of primesUnder64k.
+//
+// It is written out as a constant rather than read from the table because both
+// trial divisions below need to know where the table ends before they can walk
+// past it. TestSieveEndsAtTheHardcodedLastPrime keeps the two in agreement.
+const lastPrimeUnder64k = uint64(65521)
+
+// firstTrialDivisorAbove64k is where trial division continues once the table is
+// exhausted: the first odd number above the table that 3 does not divide.
+//
+// The obvious choice, lastPrimeUnder64k+2, is 65523 = 3 * 21841, so the walk
+// would start on a divisor it is trying to skip. Starting two further along
+// puts it on 65525 and keeps the +2/+4 stride free of multiples of 3.
+const firstTrialDivisorAbove64k = lastPrimeUnder64k + 4
+
 func init() {
-	// Generate all primes under 65536 using Sieve of Eratosthenes
+	primes, found := sievePrimesUnder64k()
+	if found != len(primesUnder64k) {
+		// Unreachable: there are exactly 6542 primes below 65536 and the sieve
+		// finds all of them, which TestSieveFindsExactlyTheExpectedNumberOfPrimes
+		// checks directly. Kept because a table that is short or padded with
+		// zeros would not fail here, it would quietly answer primality wrong for
+		// the rest of the program's life.
+		panic("unexpected number of primes under 65536")
+	}
+	primesUnder64k = primes
+}
+
+// sievePrimesUnder64k runs a Sieve of Eratosthenes over [2, 65536) and returns
+// the primes it found in ascending order, together with how many there were.
+//
+// found is returned instead of being asserted here so that a test can check the
+// count that init relies on; init turns a wrong count into a panic, which is the
+// only sensible response at program start but not something a test can observe.
+func sievePrimesUnder64k() (primes [6542]uint16, found int) {
 	const limit = 65536
 	isComposite := make([]bool, limit)
 	for i := 2; i*i < limit; i++ {
@@ -52,16 +85,15 @@ func init() {
 			}
 		}
 	}
-	index := 0
 	for i := 2; i < limit; i++ {
 		if !isComposite[i] {
-			primesUnder64k[index] = uint16(i)
-			index++
+			if found < len(primes) {
+				primes[found] = uint16(i)
+			}
+			found++
 		}
 	}
-	if index != len(primesUnder64k) {
-		panic("unexpected number of primes under 65536")
-	}
+	return primes, found
 }
 
 // primeTestDivisors returns a channel producing all candidate divisors in ascending order.
@@ -71,7 +103,6 @@ func primeTestDivisors(candidate uint64) <-chan uint64 {
 	ch := make(chan uint64, 256)
 	go func() {
 		defer close(ch)
-		last := uint64(primesUnder64k[len(primesUnder64k)-1])
 		for _, p := range &primesUnder64k {
 			sq := uint64(p) * uint64(p)
 			if sq > candidate {
@@ -79,15 +110,10 @@ func primeTestDivisors(candidate uint64) <-chan uint64 {
 			}
 			ch <- uint64(p)
 		}
-		if candidate <= last*last {
+		if candidate <= lastPrimeUnder64k*lastPrimeUnder64k {
 			return
 		}
-		if last != 65521 {
-			panic("last prime under 65536 should be 65521")
-		}
-		start := last + 2 // caution: 65521 is divisible by 3
-		start += 2        // now start is odd and not divisible by 3
-		for v := start; v*v <= candidate; {
+		for v := firstTrialDivisorAbove64k; v*v <= candidate; {
 			ch <- v
 			v += 2
 			if v*v > candidate {
@@ -123,8 +149,7 @@ func isPrime(x uint64) bool {
 		}
 	}
 
-	const lastPrimeUnder64k = uint64(65521)
-	for v := lastPrimeUnder64k + 4; v*v <= x; {
+	for v := firstTrialDivisorAbove64k; v*v <= x; {
 		if x%v == 0 {
 			return false
 		}

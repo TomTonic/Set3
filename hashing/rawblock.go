@@ -43,6 +43,10 @@ func CanUseUnsafeRawByteBlockHasher[K comparable]() RawByteBlockEligibility {
 	return CanUseUnsafeRawByteBlockHasherType(reflect.TypeOf(zero))
 }
 
+// unhandledKindReason is the answer for a reflect.Kind this analysis does not
+// name explicitly. No kind reaches it today; see the default case below.
+const unhandledKindReason = "unsupported kind for raw byte-block hashing"
+
 // CanUseUnsafeRawByteBlockHasherType recursively inspects t and decides whether a
 // raw-memory byte-block hash is semantics-preserving for values of t.
 func CanUseUnsafeRawByteBlockHasherType(t reflect.Type) RawByteBlockEligibility {
@@ -117,6 +121,12 @@ func CanUseUnsafeRawByteBlockHasherType(t reflect.Type) RawByteBlockEligibility 
 		return RawByteBlockEligibility{Eligible: false, Reason: "func values are not comparable except nil"}
 
 	default:
-		return RawByteBlockEligibility{Eligible: false, Reason: "unsupported kind for raw byte-block hashing"}
+		// Unreachable today: the cases above name every reflect.Kind except
+		// Invalid, and the only way to obtain an Invalid kind is the nil type
+		// rejected at the top of this function. It is kept so that a kind added
+		// to a future Go release is refused rather than silently treated as
+		// eligible, and TestEveryReflectKindHasAnExplicitAnswer fails if that
+		// ever becomes the live answer for a kind that exists.
+		return RawByteBlockEligibility{Eligible: false, Reason: unhandledKindReason}
 	}
 }

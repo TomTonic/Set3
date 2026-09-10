@@ -39,9 +39,10 @@ var generatedHashCache sync.Map // map[reflect.Type]HashFunction
 // same type are essentially free.
 func GenerateHashFunction(t reflect.Type) HashFunction {
 	if v, ok := generatedHashCache.Load(t); ok {
-		if v == nil {
-			return nil
-		}
+		// A type the generator cannot handle is cached as a nil HashFunction,
+		// so unsupported types are only analysed once. The assertion yields
+		// that nil back; v itself is never a nil interface, because Store is
+		// only ever handed a value of type HashFunction.
 		return v.(HashFunction)
 	}
 
@@ -194,7 +195,11 @@ func flattenArrayOps(t reflect.Type, baseOffset uintptr) []microOp {
 
 	elemType := t.Elem()
 	elemSize := elemType.Size()
-	var ops []microOp
+	// Deliberately non-nil, matching flattenStructOps: an array whose elements
+	// contribute no ops -- an array of blank-only structs, say -- is hashable as
+	// a constant, and a nil result here would instead be read as a refusal and
+	// send the type to the maphash fallback.
+	ops := make([]microOp, 0, arrLen)
 	for i := range arrLen {
 		off := baseOffset + uintptr(i)*elemSize
 		inner := flattenTypeOps(elemType, off)

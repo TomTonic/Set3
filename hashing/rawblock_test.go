@@ -223,3 +223,160 @@ func TestMakeRuntimeHasher_DoesNotUseRawByteHasherForFloatStruct(t *testing.T) {
 		t.Logf("warning: generated hash matches raw-byte hash for +0 case (may be coincidence)")
 	}
 }
+
+// TestCanUseUnsafeRawByteBlockHasherTypeRejectsReferenceKinds verifies that the
+// fast path which hashes a value's raw memory is refused for every type whose
+// memory is a reference to its value rather than the value itself.
+//
+// This decision is what stands between the fastest hasher in the package and
+// silent corruption: a map, slice, string or func is a pointer plus bookkeeping,
+// so two equal values can have completely different bytes and two different
+// values can share them. The analysis is the guard, so each refusal is worth
+// pinning individually.
+//
+// It asks about one type per rejected kind, plus a nil type, and requires
+// ineligibility with a reason that is filled in.
+func TestCanUseUnsafeRawByteBlockHasherTypeRejectsReferenceKinds(t *testing.T) {
+	var iface any
+
+	cases := []struct {
+		name string
+		typ  reflect.Type
+	}{
+		{"nil type", nil},
+		{"string", reflect.TypeOf("")},
+		{"slice", reflect.TypeOf([]byte(nil))},
+		{"map", reflect.TypeOf(map[int]int(nil))},
+		{"interface", reflect.TypeOf(&iface).Elem()},
+		{"func", reflect.TypeOf(func() {})},
+		{"float32", reflect.TypeOf(float32(0))},
+		{"float64", reflect.TypeOf(float64(0))},
+		{"complex64", reflect.TypeOf(complex64(0))},
+		{"complex128", reflect.TypeOf(complex128(0))},
+	}
+
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			got := CanUseUnsafeRawByteBlockHasherType(c.typ)
+			if got.Eligible {
+				t.Fatalf("%s must not be raw-byte hashable, got eligible with reason %q", c.name, got.Reason)
+			}
+			if got.Reason == "" {
+				t.Fatalf("%s was rejected without a reason", c.name)
+			}
+		})
+	}
+}
+
+// TestCanUseUnsafeRawByteBlockHasherTypeAcceptsOnlySelfContainedMemory verifies
+// the other direction: that types whose bytes really are their value keep the
+// fast path.
+//
+// Every type accepted here skips the generated per-field hasher entirely and is
+// hashed in one pass over its memory. Being too conservative costs speed on the
+// most common key types, so the accepting cases deserve as much attention as the
+// rejecting ones.
+//
+// It asks about scalars, pointers, channels and composites built from them, and
+// requires eligibility with a reason that is filled in.
+func TestCanUseUnsafeRawByteBlockHasherTypeAcceptsOnlySelfContainedMemory(t *testing.T) {
+	cases := []struct {
+		name string
+		typ  reflect.Type
+	}{
+		{"bool", reflect.TypeOf(false)},
+		{"int64", reflect.TypeOf(int64(0))},
+		{"uintptr", reflect.TypeOf(uintptr(0))},
+		{"pointer", reflect.TypeOf((*int)(nil))},
+		{"unsafe pointer", reflect.TypeOf(unsafe.Pointer(nil))},
+		{"channel", reflect.TypeOf(make(chan int))},
+		{"array of scalars", reflect.TypeOf([4]uint32{})},
+		{"empty array", reflect.TypeOf([0]int{})},
+		{"struct without padding", reflect.TypeOf(rbNoPaddingStruct{})},
+		{"empty struct", reflect.TypeOf(struct{}{})},
+		{"nested eligible struct", reflect.TypeOf(rbNestedOK{})},
+	}
+
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			got := CanUseUnsafeRawByteBlockHasherType(c.typ)
+			if !got.Eligible {
+				t.Fatalf("%s should be raw-byte hashable, rejected with reason %q", c.name, got.Reason)
+			}
+			if got.Reason == "" {
+				t.Fatalf("%s was accepted without a reason", c.name)
+			}
+		})
+	}
+}
+
+// TestEveryReflectKindHasAnExplicitAnswer verifies that the raw-byte
+// eligibility analysis has made a deliberate decision about every kind of Go
+// type that exists, rather than falling through to a catch-all.
+//
+// The analysis decides whether a key type takes the fastest hashing path in the
+// package. A kind that is not named explicitly would be answered by the default
+// case, which is the correct conservative answer but also an unconsidered one --
+// and if a future Go release adds a kind, nobody would notice that it silently
+// lost the fast path, or that it should never have had it.
+//
+// It builds a value of every reflect.Kind except Invalid, asks the analysis
+// about each, and requires an answer other than the catch-all. It also checks
+// that the list of kinds it walks is still complete, so a kind added to Go makes
+// this test fail rather than pass vacuously.
+func TestEveryReflectKindHasAnExplicitAnswer(t *testing.T) {
+	var iface any
+
+	perKind := map[reflect.Kind]reflect.Type{
+		reflect.Bool:          reflect.TypeOf(false),
+		reflect.Int:           reflect.TypeOf(int(0)),
+		reflect.Int8:          reflect.TypeOf(int8(0)),
+		reflect.Int16:         reflect.TypeOf(int16(0)),
+		reflect.Int32:         reflect.TypeOf(int32(0)),
+		reflect.Int64:         reflect.TypeOf(int64(0)),
+		reflect.Uint:          reflect.TypeOf(uint(0)),
+		reflect.Uint8:         reflect.TypeOf(uint8(0)),
+		reflect.Uint16:        reflect.TypeOf(uint16(0)),
+		reflect.Uint32:        reflect.TypeOf(uint32(0)),
+		reflect.Uint64:        reflect.TypeOf(uint64(0)),
+		reflect.Uintptr:       reflect.TypeOf(uintptr(0)),
+		reflect.Float32:       reflect.TypeOf(float32(0)),
+		reflect.Float64:       reflect.TypeOf(float64(0)),
+		reflect.Complex64:     reflect.TypeOf(complex64(0)),
+		reflect.Complex128:    reflect.TypeOf(complex128(0)),
+		reflect.Array:         reflect.TypeOf([1]int{}),
+		reflect.Chan:          reflect.TypeOf(make(chan int)),
+		reflect.Func:          reflect.TypeOf(func() {}),
+		reflect.Interface:     reflect.TypeOf(&iface).Elem(),
+		reflect.Map:           reflect.TypeOf(map[int]int(nil)),
+		reflect.Pointer:       reflect.TypeOf((*int)(nil)),
+		reflect.Slice:         reflect.TypeOf([]int(nil)),
+		reflect.String:        reflect.TypeOf(""),
+		reflect.Struct:        reflect.TypeOf(struct{ A int }{}),
+		reflect.UnsafePointer: reflect.TypeOf(unsafe.Pointer(nil)),
+	}
+
+	// reflect.Kind values run from Invalid to UnsafePointer without gaps. If Go
+	// grows a new one, the count changes and the missing entry has to be added
+	// here and, more importantly, to the analysis itself.
+	for k := reflect.Invalid + 1; k <= reflect.UnsafePointer; k++ {
+		if _, ok := perKind[k]; !ok {
+			t.Fatalf("reflect.Kind %v (%d) is not covered by this test; "+
+				"check that CanUseUnsafeRawByteBlockHasherType names it explicitly", k, k)
+		}
+	}
+	if len(perKind) != int(reflect.UnsafePointer) {
+		t.Fatalf("this test walks %d kinds, reflect defines %d excluding Invalid",
+			len(perKind), int(reflect.UnsafePointer))
+	}
+
+	for kind, typ := range perKind {
+		got := CanUseUnsafeRawByteBlockHasherType(typ)
+		if got.Reason == unhandledKindReason {
+			t.Fatalf("kind %v fell through to the catch-all; it needs an explicit case", kind)
+		}
+		if got.Reason == "" {
+			t.Fatalf("kind %v was answered without a reason", kind)
+		}
+	}
+}
