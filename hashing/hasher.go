@@ -39,72 +39,64 @@ func MakeRuntimeHasher[K comparable](seed uint64) RuntimeHasher[K] {
 	h := RuntimeHasher[K]{Seed: seed}
 	var zero K
 
-	switch any(zero).(type) {
-	case uint8:
+	t := reflect.TypeOf(zero)
+	if t == nil {
+		// K is an interface type. Since Go 1.20 ordinary interface types
+		// satisfy the comparable constraint, so K may legitimately be any or
+		// a named interface. The zero value is a nil interface, for which
+		// reflect.TypeOf returns nil, so no static layout analysis is
+		// possible: dispatch has to happen per value at hash time. maphash
+		// handles this (and panics for dynamic types that are not
+		// comparable, matching the behaviour of ==).
+		h.fn = HashFallbackMaphash[K]
+		return h
+	}
+
+	// Dispatch on the kind rather than on the concrete type. A type switch
+	// over concrete types only matches exact types, so a named type such as
+	// "type UserID uint64" would miss every fast path and fall through to the
+	// generic byte-block hasher. Switching on the kind gives named types the
+	// same specialized hasher as their underlying type.
+	switch t.Kind() {
+	case reflect.Uint8, reflect.Int8:
 		h.fn = SwirlByte
-	case int8:
-		h.fn = SwirlByte
-	case bool:
+	case reflect.Bool:
 		h.fn = HashBool
-	case uint16:
+	case reflect.Uint16, reflect.Int16:
 		h.fn = HashI16SM
-	case int16:
-		h.fn = HashI16SM
-	case uint32:
+	case reflect.Uint32, reflect.Int32:
 		h.fn = HashI32WHdet
-	case int32:
-		h.fn = HashI32WHdet
-	case uint64:
+	case reflect.Uint64, reflect.Int64:
 		h.fn = HashI64WHdet
-	case int64:
-		h.fn = HashI64WHdet
-	case uint:
+	case reflect.Uint, reflect.Int:
 		h.fn = HashInt
-	case int:
-		h.fn = HashInt
-	case uintptr:
+	case reflect.Uintptr, reflect.Pointer, reflect.UnsafePointer, reflect.Chan:
+		// All pointer-shaped scalars; equality is over the pointer value
+		// itself, which is exactly what HashPtr mixes.
 		h.fn = HashPtr
-	case float32:
+	case reflect.Float32:
 		h.fn = HashF32SM
-	case float64:
+	case reflect.Float64:
 		h.fn = HashF64WHdet
-	case string:
+	case reflect.String:
 		h.fn = HashString
-	case []byte, []int8:
-		// []byte and []uint8 are identical types; both use slice handler
-		h.fn = HashByteSlice
-	case []int, []uint, []int16, []uint16, []int32, []uint32,
-		[]int64, []uint64:
-		// h.fn = hashAnySliceAsByteSlice[K]
-		panic("slices of non-byte int/uint types were not 'comparable' at the time of writing this code, so no tests were possible")
 	default:
-		// fall back to reflect-based inspection for more cases
-		t := reflect.TypeOf(zero)
 		switch {
-		case t == nil:
-			// K is an interface type. Since Go 1.20 ordinary interface types
-			// satisfy the comparable constraint, so K may legitimately be
-			// any or a named interface. The zero value is a nil interface,
-			// for which reflect.TypeOf returns nil, so no static layout
-			// analysis is possible: dispatch has to happen per value at
-			// hash time. maphash handles this (and panics for dynamic types
-			// that are not comparable, matching the behaviour of ==).
-			h.fn = HashFallbackMaphash[K]
-		case t.Kind() == reflect.Slice && t.Elem().Kind() == reflect.Uint8:
-			// subtle difference: []byte (but with different declared element type) -> use slice handler
-			h.fn = HashByteSlice
 		case CanUseUnsafeRawByteBlockHasherType(t).Eligible:
 			// Fast path for layouts that are safe for raw byte-block hashing
 			// according to Go equality semantics.
 			h.fn = HashAsByteArray[K]
-		case GenerateHashFunction(t) != nil:
-			// Reflection-based generator produced a fast, type-specific
-			// hash closure (e.g. for structs with padding, floats, strings,
-			// or complex fields). No reflection happens at hash time.
-			h.fn = GenerateHashFunction(t)
 		default:
-			// generic approach: use internal hash function from SwissMapType
-			h.fn = HashFallbackMaphash[K]
+			// Reflection-based generator produces a fast, type-specific hash
+			// closure (e.g. for structs with padding, floats, strings, or
+			// complex fields). No reflection happens at hash time. It returns
+			// nil for types it cannot handle, e.g. structs with interface
+			// fields, which fall back to maphash.
+			if fn := GenerateHashFunction(t); fn != nil {
+				h.fn = fn
+			} else {
+				h.fn = HashFallbackMaphash[K]
+			}
 		}
 	}
 	return h
