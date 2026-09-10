@@ -158,7 +158,7 @@ func EmptyWithCapacity[T comparable](initialCapacity uint32) *Set3[T] {
 	reqNrOfGroups := calcReqNrOfGroups(initialCapacity)
 	nrOfGroups := nextPrime(uint64(reqNrOfGroups))
 	result := &Set3[T]{
-		hashFunction: hashing.MakeRuntimeHasher[T](uint64((rand.Uint64() & 0xFFFFFFFFFFFFFFE) + 1)), // make sure seed is not zero
+		hashFunction: hashing.MakeRuntimeHasher[T](randomSeed()),
 		groupCtrl:    make([]uint64, nrOfGroups),
 		groupSlot:    make([][set3groupSize]T, nrOfGroups),
 		elementLimit: uint32(float64(nrOfGroups) * set3maxAvgGroupLoad),
@@ -167,6 +167,16 @@ func EmptyWithCapacity[T comparable](initialCapacity uint32) *Set3[T] {
 		result.groupCtrl[i] = set3AllEmpty
 	}
 	return result
+}
+
+// randomSeed returns a random, non-zero hash seed.
+//
+// Only the lowest bit is forced; all other 63 bits keep the full entropy of
+// rand.Uint64. A seed of zero is avoided because hashing.SeedToMaphashSeed
+// treats it as "uninitialized" and substitutes a fixed constant, which would
+// make the seed non-random for the maphash fallback path.
+func randomSeed() uint64 {
+	return rand.Uint64() | 1
 }
 
 func calcReqNrOfGroups(reqCapa uint32) uint32 {
@@ -1158,7 +1168,7 @@ func (thisSet *Set3[T]) rehashToNumGroups(newNumGroups uint32) {
 	oldGroupCtrl := thisSet.groupCtrl
 	oldGroupSlot := thisSet.groupSlot
 
-	thisSet.hashFunction.Seed = uint64((rand.Uint64() & 0xFFFFFFFFFFFFFFE) + 1) // new seed, make sure seed is not zero
+	thisSet.hashFunction.Seed = randomSeed() // new seed to break up the collision pattern that triggered this rehash
 	thisSet.groupCtrl = make([]uint64, newNumGroups)
 	thisSet.groupSlot = make([][set3groupSize]T, newNumGroups)
 	thisSet.elementLimit = uint32(float64(newNumGroups) * set3maxAvgGroupLoad)
