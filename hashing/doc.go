@@ -15,7 +15,13 @@
 // coherent reference set. Production code uses a subset; the remaining
 // constants exist for the candidates and comparison suites under lab/.
 //
+// The byte-oriented routines (strings, byte slices and fixed-size raw blocks)
+// are a specialization of the Go runtime's own wyhash-derived map hasher; see
+// wybytes.go for the provenance and for what was changed. The scalar routines
+// are this package's own.
+//
 // The hash functions that were considered and rejected, and the suites that
 // measure distribution quality and runtime against them, live under lab/ and
-// are compiled only with the set3lab build tag. See lab/README.md.
+// are compiled only with the set3lab build tag — including a port of the Go
+// authors' SMHasher suite retargeted onto these routines. See lab/README.md.
 package hashing

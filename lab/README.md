@@ -51,7 +51,7 @@ demand).
 | --- | --- |
 | [`hashalt/`](hashalt) | Hash functions that Set3 does *not* use — candidates that lost the comparison, were never finished, or were superseded. The `Serial*` routines are the byte-block hashes the lane-parallel ones replaced, kept runnable so the speed claim stays checkable. |
 | [`hashbench/`](hashbench) | Shared plumbing for the hash experiments: data generators, statistics, small PRNGs. |
-| [`hashquality/`](hashquality) | Distribution, uniformity, avalanche and ranking suites over `hashalt` and the production functions. Some suites run for tens of minutes. |
+| [`hashquality/`](hashquality) | Distribution, uniformity, avalanche and ranking suites over `hashalt` and the production functions, plus the Go authors' SMHasher port retargeted onto `hashing` (`smhasher_test.go`). Some suites run for tens of minutes. |
 | [`hashperf/`](hashperf) | Runtime A/B comparisons of hash functions via `rtcompare`. |
 | [`setbench/`](setbench) | The older `Set3` vs. `map[T]struct{}` measurements: fill/lookup series, memory footprint, a hand-rolled A/B/B/A comparison, and a randomised operation mix for CPU profiling. |
 | [`setcompare/`](setcompare) | The current `Set3` vs. `map[T]struct{}` suite: ten workloads across four key types and five sizes, measured through the full `rtcompare` protocol, plus a calibrated memory pass. Writes CSV. |

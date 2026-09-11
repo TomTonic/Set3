@@ -7,18 +7,18 @@ import (
 
 // HashBytesBlock hashes a byte slice.
 //
-// It is the variable-length entry point into the lane-parallel body in
-// lanehash.go: short inputs are straight-line code, and only inputs past 32
-// bytes enter a loop. See that file for why the shape is what it is.
+// It is the variable-length entry point into [wyBlock], the wyhash-derived body
+// ported from the Go runtime's own map hasher. See wybytes.go for the
+// provenance and for what was specialized.
 //
 // The hash depends on the platform's endianness — it is a hash table's hash,
-// not a wire format — and it is deterministic within a process family: the same
-// bytes and the same seed always give the same value.
+// not a wire format — and it is deterministic: the same bytes and the same seed
+// always give the same value.
 func HashBytesBlock(seed uint64, b []byte) uint64 {
 	if len(b) == 0 {
-		return hashLaneBytes(nil, 0, seed)
+		return wyBlock(nil, 0, seed)
 	}
-	return hashLaneBytes(unsafe.Pointer(&b[0]), len(b), seed) //nolint:gosec
+	return wyBlock(unsafe.Pointer(&b[0]), len(b), seed) //nolint:gosec
 }
 
 // HashAsByteArray handles fixed-size raw-byte-eligible values (for example
@@ -48,9 +48,9 @@ func HashString(p unsafe.Pointer, seed uint64) uint64 {
 	s := *(*string)(p)
 	n := len(s)
 	if n == 0 {
-		return hashLaneBytes(nil, 0, seed)
+		return wyBlock(nil, 0, seed)
 	}
-	return hashLaneBytes(unsafe.Pointer(unsafe.StringData(s)), n, seed) //nolint:gosec
+	return wyBlock(unsafe.Pointer(unsafe.StringData(s)), n, seed) //nolint:gosec
 }
 
 // HashFallbackMaphash is the generic fallback hasher which uses stdlib

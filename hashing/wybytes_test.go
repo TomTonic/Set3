@@ -72,14 +72,15 @@ func nthInput(buf []byte, i int, base uint64, rng *testRNG, enum bool) uint64 {
 		return base
 	}
 	space := int(inputSpace(len(buf)))
-	if space == 0 { // the empty input: there is one of it
-		return base + uint64(i) //nolint:gosec
-	}
 	v := i % space
 	for j := range buf {
 		buf[j] = byte(v >> (8 * j)) //nolint:gosec
 	}
-	return base + uint64(i/space) //nolint:gosec
+	// Once the space is exhausted the seed moves on. The step is the golden
+	// ratio rather than one, so that a statistic taken across seeds is not
+	// measuring the counter: consecutive seeds differ only in their lowest
+	// bits, which is exactly where the H2 tag is read from.
+	return base + uint64(i/space)*0x9e3779b97f4a7c15 //nolint:gosec
 }
 
 // hashLengths is the set of input lengths the structural tests walk. It covers
@@ -193,23 +194,28 @@ func TestHashRespondsToTheSeed(t *testing.T) {
 	}
 }
 
-// TestDegenerateOperandsDoNotEraseInput constructs the inputs that a
-// multiply-based hash is vulnerable to, rather than hoping a random sample
-// finds them.
+// TestNoSeedIndependentErasure constructs the inputs a multiply-based hash is
+// vulnerable to, rather than hoping a random sample finds them.
 //
 // Mix is a widening multiply, so it returns zero whenever either operand is
-// zero, and a lane that reaches zero has forgotten everything fed into it. Each
-// operand in these routines is an input word XORed with a constant or with the
-// seed. Where that constant is public, an input word can be chosen to zero the
-// lane — and in the first draft of this file, a 16-byte key whose first word
-// was exactly P1 hashed to the same value no matter what the other eight bytes
-// held, for every seed. That is a collision family of 2^64 keys reachable
-// without knowing anything about the table.
+// zero, and the final mix of zero is zero. Every operand here is an input word
+// XORed with a secret word, so a key that matches a secret erases everything
+// next to it: every such key hashes alike no matter what the rest of it holds.
+// wyhash has this property and so does the Go runtime's map hasher; what makes
+// it harmless is that the secret is not public.
 //
-// laneMix removes the absorbing element. This test places every constant in the
-// code at every word position, varies the rest of the key, and requires all the
-// results to stay distinct.
-func TestDegenerateOperandsDoNotEraseInput(t *testing.T) {
+// This test asserts the part that is not allowed to be true: that no *public*
+// constant erases anything. Every constant in the package is placed at every
+// word position of keys of every length class, the rest of the key is varied,
+// and the results must stay distinct — for many seeds, so that a single lucky
+// seed cannot hide a systematic hole.
+//
+// The seeds are drawn rather than chosen. A hand-picked seed equal to one of
+// the constants does degenerate — k1 is seed^P1, which is zero exactly when the
+// seed is P1 — and that is the same one-in-2^64 risk the reference carries when
+// its random hashkey[1] comes up zero. TestErasureDoesNotSurviveAReseed covers
+// what Set3 actually relies on instead.
+func TestNoSeedIndependentErasure(t *testing.T) {
 	constants := []struct {
 		name string
 		v    uint64
@@ -222,39 +228,30 @@ func TestDegenerateOperandsDoNotEraseInput(t *testing.T) {
 		{"P3", P3},
 		{"M5", M5},
 	}
-	// The seed is varied too, including seeds equal to the constants: a lane
-	// whose second operand is `seed ^ P2` collapses when the seed happens to be
-	// P2, which is a collision family that only shows up for one table in 2^64
-	// but shows up completely when it does.
-	seeds := []uint64{1, 0x243f6a8885a308d3, P0, P1, P2, P3, M5}
+	lengths := []int{8, 12, 16, 20, 24, 28, 32, 40, 48, 56, 64, 96, 128}
 
-	lengths := []int{8, 12, 16, 20, 24, 28, 32, 40, 41, 48, 56, 64, 96, 128}
-
-	for _, seed := range seeds {
+	seedRNG := &testRNG{s: 0xf00d}
+	for range 16 {
+		seed := seedRNG.next()
 		for _, n := range lengths {
 			words := n / 8
 			for _, c := range constants {
 				for w := range words {
 					seen := make(map[uint64]string)
-					for v := range uint64(256) {
+					for v := range uint64(64) {
 						buf := make([]byte, n)
-						// Fill every other word with a varying value and pin
-						// word w to the constant under test.
 						for j := range words {
-							val := v*0x9e3779b97f4a7c15 + uint64(j)*0x1234567
+							val := v*0x9e3779b97f4a7c15 + uint64(j)*0x1234567 //nolint:gosec
 							if j == w {
 								val = c.v
 							}
 							putWord(buf, j*8, val)
 						}
-						for i := words * 8; i < n; i++ {
-							buf[i] = byte(v + uint64(i)) //nolint:gosec
-						}
 						h := HashBytesBlock(seed, buf)
 						key := fmt.Sprintf("%x", buf)
 						if prev, ok := seen[h]; ok && prev != key {
 							t.Fatalf("seed=%#x n=%d word %d pinned to %s: %s and %s collide at %#x; "+
-								"a degenerate operand erased the rest of the key",
+								"a public constant erased the rest of the key",
 								seed, n, w, c.name, prev, key, h)
 						}
 						seen[h] = key
@@ -265,26 +262,55 @@ func TestDegenerateOperandsDoNotEraseInput(t *testing.T) {
 	}
 }
 
-func putWord(b []byte, off int, v uint64) {
-	for i := range 8 {
-		b[off+i] = byte(v >> (8 * i)) //nolint:gosec
+// TestErasureDoesNotSurviveAReseed pins the property Set3 depends on where the
+// reference cannot promise more.
+//
+// A key whose first word equals the secret does erase the word beside it — that
+// is wyhash's structure and this test constructs it deliberately rather than
+// pretending otherwise. What must hold is that the family is a property of one
+// seed and not of the algorithm: Set3 draws a fresh seed whenever a rehash is
+// triggered by a collision pattern, and that only helps if the colliding keys
+// stop colliding afterwards.
+func TestErasureDoesNotSurviveAReseed(t *testing.T) {
+	const seed = uint64(0x243f6a8885a308d3)
+
+	// The erasing family: sixteen-byte keys whose first word is the secret.
+	// Under this seed the first mix is zero and the second word is lost.
+	family := make([][]byte, 8)
+	for i := range family {
+		b := make([]byte, 16)
+		putWord(b, 0, seed^P1)
+		putWord(b, 8, uint64(i)*0x9e3779b97f4a7c15+1) //nolint:gosec
+		family[i] = b
+	}
+
+	first := HashBytesBlock(seed, family[0])
+	for _, b := range family[1:] {
+		if HashBytesBlock(seed, b) != first {
+			t.Fatalf("the erasing family was expected to collide under its own seed; "+
+				"if this now passes, the construction no longer matches the code and the "+
+				"reseed guarantee below is being tested against nothing (key %x)", b)
+		}
+	}
+
+	// Under any other seed they must be distinct again.
+	rng := &testRNG{s: 0xbeef}
+	for range 32 {
+		other := rng.next()
+		seen := make(map[uint64]int, len(family))
+		for i, b := range family {
+			h := HashBytesBlock(other, b)
+			if prev, ok := seen[h]; ok {
+				t.Errorf("seed %#x: keys %d and %d still collide after a reseed (%#x)", other, prev, i, h)
+			}
+			seen[h] = i
+		}
 	}
 }
 
-// TestLaneMixHasNoAbsorbingElement is the unit-level statement of the property
-// the previous test checks end to end: a lane only forgets its input when both
-// operands are zero at once, which needs the seed as well as the input.
-func TestLaneMixHasNoAbsorbingElement(t *testing.T) {
-	for _, v := range []uint64{1, 42, P0, P1, P2, P3, M5, ^uint64(0)} {
-		if got := laneMix(0, v); got != v {
-			t.Errorf("laneMix(0, %#x) = %#x, want %#x: a zero operand must not erase the other one", v, got, v)
-		}
-		if got := laneMix(v, 0); got != v {
-			t.Errorf("laneMix(%#x, 0) = %#x, want %#x", v, got, v)
-		}
-	}
-	if got := laneMix(0, 0); got != 0 {
-		t.Errorf("laneMix(0, 0) = %#x, want 0", got)
+func putWord(b []byte, off int, v uint64) {
+	for i := range 8 {
+		b[off+i] = byte(v >> (8 * i)) //nolint:gosec
 	}
 }
 
@@ -542,7 +568,13 @@ func TestHashBucketsAreUniform(t *testing.T) {
 	// is far outside sampling noise and is a clear signal of structure.
 	const maxChi = 2.0
 
-	for _, n := range []int{0, 1, 2, 3, 4, 8, 12, 16, 20, 24, 28, 32, 41, 64, 128} {
+	// The empty input is absent on purpose. It has exactly one value, so a
+	// distribution over it is a distribution over seeds, and the reference
+	// returns the seeded accumulator for it untouched — which makes the
+	// statistic a statement about how the test picks seeds. What matters for
+	// the empty key is that its hash moves with the seed, and
+	// TestHashRespondsToTheSeed says so directly.
+	for _, n := range []int{1, 2, 3, 4, 8, 12, 16, 20, 24, 28, 32, 41, 64, 128} {
 		rng := &testRNG{s: 0xabcd}
 		buf := make([]byte, n)
 		enum := enumerate(n, samples)

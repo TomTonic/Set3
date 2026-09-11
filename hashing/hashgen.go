@@ -486,39 +486,63 @@ func fixedSizeByteBlockHasher(size int) HashFunction {
 	}
 }
 
-// The fixed-size helpers below are the lane-parallel body of lanehash.go with
-// the length pinned to a constant.
+// The fixed-size helpers below are [wyBlock] with the length pinned to a
+// constant: the same reads, the same mixes, the same order, with the length
+// switch and the loop bounds resolved at compile time.
 //
-// Writing them as specializations rather than as six hand-unrolled routines
-// makes them equal to the generic path by construction: a [24]byte array and a
-// 24-byte slice hash alike because they run the same code, not because someone
-// kept two transcriptions in step. TestFixedBlockHelpersAreTheGenericPath pins
-// that for every size.
+// They are transcriptions rather than calls because the generic body is past
+// the inliner's budget, and these are the shapes a struct key actually takes.
+// A transcription can drift, so TestFixedBlockHelpersAreTheGenericPath holds
+// each one equal to what the generic path computes for that length, over
+// random inputs and several seeds. That test is the reason the duplication is
+// safe; do not remove it.
 //
-// The bodies they call are past the inliner's budget, so each of these is a
-// direct call rather than straight-line code. Spelling the read windows out
-// here to buy that back was measured and gained nothing — at this size the
-// dispatch through the HashFunction value costs more than the call does — so
-// the simpler form is the one that ships.
+// Sizes 20 to 32 take the reference's default branch, which runs its 16-byte
+// round once and then reads the last sixteen bytes — overlapping back into what
+// the round already consumed. That is where the a and b offsets below come
+// from: after one round the cursor stands at 16 and l is size-16, so a is at
+// size-16 and b at size-8.
 
 // hashByteBlock12 hashes exactly 12 bytes.
-func hashByteBlock12(p unsafe.Pointer, seed uint64) uint64 { return laneShort(p, 12, seed) }
+func hashByteBlock12(p unsafe.Pointer, seed uint64) uint64 {
+	k1 := seed ^ P1
+	return wyFinal(read8(p, 0), read8(p, 4), 12, k1, seed^P0)
+}
 
 // hashByteBlock16 hashes exactly 16 bytes.
-func hashByteBlock16(p unsafe.Pointer, seed uint64) uint64 { return laneShort(p, 16, seed) }
+func hashByteBlock16(p unsafe.Pointer, seed uint64) uint64 {
+	k1 := seed ^ P1
+	return wyFinal(read8(p, 0), read8(p, 8), 16, k1, seed^P0)
+}
 
 // hashByteBlock20 hashes exactly 20 bytes.
-func hashByteBlock20(p unsafe.Pointer, seed uint64) uint64 { return laneMedium(p, 20, seed) }
+func hashByteBlock20(p unsafe.Pointer, seed uint64) uint64 {
+	k1 := seed ^ P1
+	h := Mix(read8(p, 0)^k1, read8(p, 8)^(seed^P0))
+	return wyFinal(read8(p, 4), read8(p, 12), 20, k1, h)
+}
 
 // hashByteBlock24 hashes exactly 24 bytes, the size of a three-field uint64
 // struct key and the shape the raw-block hasher sees most often.
-func hashByteBlock24(p unsafe.Pointer, seed uint64) uint64 { return laneMedium(p, 24, seed) }
+func hashByteBlock24(p unsafe.Pointer, seed uint64) uint64 {
+	k1 := seed ^ P1
+	h := Mix(read8(p, 0)^k1, read8(p, 8)^(seed^P0))
+	return wyFinal(read8(p, 8), read8(p, 16), 24, k1, h)
+}
 
 // hashByteBlock28 hashes exactly 28 bytes.
-func hashByteBlock28(p unsafe.Pointer, seed uint64) uint64 { return laneMedium(p, 28, seed) }
+func hashByteBlock28(p unsafe.Pointer, seed uint64) uint64 {
+	k1 := seed ^ P1
+	h := Mix(read8(p, 0)^k1, read8(p, 8)^(seed^P0))
+	return wyFinal(read8(p, 12), read8(p, 20), 28, k1, h)
+}
 
 // hashByteBlock32 hashes exactly 32 bytes.
-func hashByteBlock32(p unsafe.Pointer, seed uint64) uint64 { return laneMedium(p, 32, seed) }
+func hashByteBlock32(p unsafe.Pointer, seed uint64) uint64 {
+	k1 := seed ^ P1
+	h := Mix(read8(p, 0)^k1, read8(p, 8)^(seed^P0))
+	return wyFinal(read8(p, 16), read8(p, 24), 32, k1, h)
+}
 
 // ── Inline hash helpers ─────────────────────────────────────────────────────
 

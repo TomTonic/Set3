@@ -4,3 +4,15 @@ Copyright 2024-2026 TomTonic
 
 This product includes code derived from the Dolthub, Inc. (https://www.dolthub.com/)
 SwissMap port of absl::flat_hash_map, and Google Inc.
+
+This product includes code derived from the Go standard library, Copyright 2009
+The Go Authors, used under the BSD 3-clause license found in the Go
+distribution's LICENSE file:
+
+  - hashing/wybytes.go is a specialization of memHashFallback from
+    internal/runtime/maps (runtime_fallback.go), the Go authors' adaptation of
+    wyhash (https://github.com/wangyi-fudan/wyhash) by Wang Yi.
+
+  - lab/hashquality/smhasher_test.go is a port of hash/maphash/smhasher_test.go,
+    which is itself a port of part of SMHasher by Austin Appleby
+    (https://github.com/aappleby/smhasher).

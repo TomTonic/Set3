@@ -221,12 +221,29 @@ gap is small; what dominated it was a serial dependency chain of widening
 multiplies — an N-word key cost 2N multiplies that the processor could not
 overlap, because each one needed the previous one's result.
 
-That chain is gone. The byte routines now consume words in independent lanes and
-combine them once at the end, so a key is two levels of multiply deep instead of
-2N. Measured as latency, where nothing can overlap: a 24-byte struct key falls
-from 8.47 ns to 3.53 ns, a 32-byte one from 10.48 to 3.40, a 24-byte string from
-10.55 to 5.66 and a 64-byte string from 20.56 to 9.12. `lab/hashperf` keeps the
-superseded routine runnable as the baseline so the comparison stays checkable.
+That chain is gone. The byte routines are now a specialization of
+`memHashFallback` from the Go runtime's own map hasher — the Go authors'
+adaptation of [wyhash](https://github.com/wangyi-fudan/wyhash) — which consumes
+words in independent lanes and closes with two mixing steps instead of one per
+word. Set3 specializes it to native endianness, derives its four secret words
+from the per-set seed instead of a process-global random array, and pins the hot
+fixed key sizes to straight-line entry points.
+
+Measured as latency, where nothing can overlap: a 16-byte key falls from 6.34 ns
+to 2.54, a 24-byte struct key from 8.44 to 3.51, a 32-byte one from 10.51 to
+3.40, a 24-byte string from 10.59 to 5.49 and a 64-byte string from 20.69 to
+6.43. `lab/hashperf` keeps the superseded routine runnable as the baseline, so
+the comparison stays checkable.
+
+Quality is not argued from the speedup. `lab/hashquality/smhasher_test.go` is the
+Go authors' port of [SMHasher](https://github.com/aappleby/smhasher) retargeted
+onto this package — sanity, appended zeros, small keys, all-zero lengths, two
+nonzero bytes, cyclic repeats, sparse bit patterns, block permutations, windowed
+rotations, text, avalanche and seed sensitivity, all measured against a collision
+bound derived from the birthday paradox. The `hashing` package carries its own
+structural tests on top of that, including one that pins the read window to
+exactly the key and one that holds each fixed-size entry point equal to the
+generic path.
 
 **The charts above predate that change** and have not been re-measured; the
 lookup rows for string and struct keys should improve, and nothing else should
