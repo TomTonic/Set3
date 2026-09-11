@@ -7,10 +7,12 @@
 [![OpenSSF Best Practices](https://www.bestpractices.dev/projects/9470/badge)](https://www.bestpractices.dev/projects/9470)
 [![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/TomTonic/Set3/badge)](https://scorecard.dev/viewer/?uri=github.com/TomTonic/Set3)
 
-Set3 is a high-performance, native Golang set implementation. It offers a significant improvement in speed and memory efficiency,
-being 10%-30% faster and utilizing 25% less memory compared to `map[type]struct{}`. Additionally, Set3 provides the flexibility to
-optimize for either space consumption or speed through the RehashToCapacity(newCapacity) function. This level of performance and
-adaptability is unattainable with implementations based on `map[type]struct{}`, which is the standard foundation for most set implementations in Go.
+Set3 is a high-performance, native Golang set implementation. Against `map[type]struct{}`, the standard foundation for most
+Go set implementations, it holds about a third of the bytes and is faster on most workloads — dramatically so on iteration, set
+algebra and bulk building. The [Performance](#performance) section has the measurements, one workload at a time, each with the
+confidence interval and the machine's own noise floor next to it. Set3 additionally lets you trade space against speed through
+`RehashToCapacity(newCapacity)`, which an implementation built on `map[type]struct{}` cannot offer at all — and which the suite
+uses to compare the two at the *same* occupancy as well as as-shipped.
 
 The code is derived from [SwissMap](https://github.com/dolthub/swiss) and it implements the "Fast, Efficient, Cache-friendly Hash Table" found in [Abseil](https://abseil.io/blog/20180927-swisstables).
 For details on the algorithm see the [CppCon 2017 talk by Matt Kulukundis](https://www.youtube.com/watch?v=ncHmEUmJZf4).
@@ -94,17 +96,106 @@ lives there and how to run each suite for real.
 
 ## Performance
 
-The following benchmarks have been performed with [v0.4.0](https://github.com/TomTonic/Set3/releases/tag/v0.4.0) to compare `Set3[uint64]` with `map[uint64]struct{}` with the command:
+Set3 is measured against `map[T]struct{}` by the suite in
+[`lab/setcompare`](lab/setcompare): twelve workloads, four key types, and set
+sizes from a thousand elements to two million by default, or to eight million
+with `SET3_CMP_HUGE=1`. Six of the workloads are shaped
+after something a program actually does with a set — a membership filter on a
+request path, a deduplication window with an expiry, a live index under churn,
+the visited set of a graph traversal, an inverted-index intersection, a flush
+that walks every element. The other four isolate one cost each, because a
+realistic workload that mixes four costs cannot tell you which of them moved,
+and two repeat the membership workloads with Set3 rehashed to the native map's
+occupancy — see [Memory](#memory) for why that is a separate question.
+
+Every number comes with the evidence for it. The suite runs the full
+[rtcompare](https://github.com/TomTonic/rtcompare/blob/main/HOWTO.md) protocol:
+batches sized so the clock contributes a bounded error, each candidate run
+against *itself* first to find out what this machine reports as a difference
+when there provably is none, the two candidates then measured interleaved,
+each series tested for a trend across the run, and correlated samples resampled
+in blocks. A result that does not clear both zero and that noise floor is
+reported as **unresolved** rather than as a small win, and such cells are drawn
+in the charts rather than dropped.
 
 ```sh
-go test -tags set3lab -v -count=1 -timeout=120m \
-  -run "^(TestSet3Fill|TestNativeMapFill|TestSet3Find|TestNativeMapFind)$" \
-  ./lab/setbench > lab/results/benchresult.txt
+go test -tags set3lab -run TestCompareSuite -v -count=1 -timeout 180m ./lab/setcompare
+go run  -tags set3lab ./lab/cmd/setchart -in lab/results/setcompare
 ```
 
-(Raw benchmark results are available [in plain text](lab/results/benchresult.txt). Go version 1.23.1, no PGO.
-Please note that you have to comment out the instructions to skip the tests first (`t.Skip("...")`). The whole benchmark runs about 45 minutes.
-The benchmark lives behind a build tag — see [lab/README.md](lab/README.md).)
+The measurement takes upwards of an hour; drawing takes an instant. It writes
+`lab/results/setcompare/` as CSV, with a `run.txt` naming the machine and the
+configuration, and the chart tool turns those into the SVGs below. See
+[lab/README.md](lab/README.md) for the knobs.
+
+Read the machine's own verdict on itself before reading any result: `run.txt`
+and the `note` column record the noise floor, the cells that drifted, and the
+rate at which the setup reported a difference between two runs of *identical*
+code. A run whose warnings mention a false-signal rate well above 10% was taken
+on a machine that was not holding still, and its magnitudes should not be
+quoted.
+
+### How much faster
+
+> **Being re-measured.** The figures that stood here came from a run whose
+> batch lengths were too short, which made the answers depend on how long the
+> harness looked rather than on the code — see `targetBatchDuration` and
+> `collectOptionsFor` in [`lab/setcompare/runtime.go`](lab/setcompare/runtime.go)
+> for what went wrong and
+> `TestQuantizationTargetDoesNotChangeTheAnswer` for the guard that now stands
+> over it. The suite is being re-run at the corrected settings, and at two
+> operating points rather than one: as shipped, and with Set3 rehashed to the
+> native map's occupancy, so that the space/time trade is held fixed and the
+> layouts are compared on their own. The charts and the table return here when
+> that run lands.
+>
+> The memory results below are unaffected: they come from a separate,
+> deterministic pass that has reproduced to the digit across every run.
+
+### Memory
+
+Set3 holds between 31% and 64% of the native map's bytes, depending on the key
+type and on how the container was filled. This is measured as heap still live
+after a full collection with the container reachable — not as anything either
+container reports about itself — and the measurement is calibrated against a
+`[]uint64` of known size on every run. (The chart returns with the rest of them;
+the table is the substance.)
+
+| Fill history | `Set3[uint64]` | `map[uint64]struct{}` | ratio |
+| --- | --- | --- | --- |
+| created at the right capacity | 11.1 B/elem | 36.1 B/elem | **0.31×** |
+| grown from empty | 13.1 B/elem | 36.1 B/elem | **0.36×** |
+| filled, then half removed | 22.2 B/elem | 72.2 B/elem | **0.31×** |
+| a sliding window after 4× its size in churn | 16.6 B/elem | 36.1 B/elem | **0.46×** |
+
+Two mechanisms account for all of the difference, and both are properties of
+the Go runtime rather than of anyone's benchmark:
+
+1. **A `struct{}` value is not free.** The native map's slot is a struct of key
+   and element, and Go pads a struct whose last field is zero-sized so that a
+   pointer one past the end cannot escape the object. `struct{uint64; struct{}}`
+   therefore occupies 16 bytes — exactly as much as `struct{uint64; uint64}`,
+   which is why a `map[uint64]struct{}` and a `map[uint64]uint64` measure
+   identically here. With eight control bytes per group of eight slots, the
+   native map pays 17 bytes per slot. Set3 stores the keys themselves in a
+   `[8]T` array with one 64-bit control word beside it, and pays 9.
+2. **The occupancy differs.** At 17 bytes per slot, 36 bytes per element works
+   out to 2.12 slots per element, so the map runs about 47% full. Set3 runs to
+   its limit of 6.67 slots in 8, which is 83%.
+
+Nine bytes per slot at 83% against seventeen at 47% is the whole of it. Note
+what that is *not*: it is not waste. A lower load factor buys shorter probe
+sequences, and the native map spends memory on exactly that — which is why the
+suite also measures Set3 rehashed to the map's occupancy. At equal load factor
+Set3 still holds about 53% of the bytes, because the padded slot is a separate
+effect from the occupancy; what changes is the probe length, and that is the
+part a speed comparison at unequal occupancy silently folds in.
+
+Note also that these figures moved with Go itself. On the bucket map that this
+README's original 25% figure was taken on, `map[uint64]struct{}` cost about 12
+bytes per element; the Swiss-table rewrite in Go 1.24 tripled it. The suite
+carries that as an executable note — `TestNativeMapFootprintIsWhatWeMeasure`
+fails if the runtime's representation changes again.
 
 ### Profile-Guided Optimization
 
@@ -140,7 +231,17 @@ yours to collect: record a CPU profile of your application under a realistic
 load, drop it in your main package as `default.pgo`, and rebuild. Nothing in
 `Set3` needs to change.
 
-### Inserting Nodes into an Empty Set
+### Earlier measurements (v0.4.0, Go 1.23)
+
+The charts below predate the suite above. They were produced with
+[v0.4.0](https://github.com/TomTonic/Set3/releases/tag/v0.4.0) on Go 1.23.1
+without PGO, by `lab/setbench`, and they cover a range the current suite does
+not: every size from 1 to 300 elements, one at a time, where the constant costs
+of allocating a container still dominate. Raw results are
+[in plain text](lab/results/benchresult.txt); see
+[lab/README.md](lab/README.md) for how to reproduce them.
+
+#### Inserting Nodes into an Empty Set
 
 The following chart illustrates the time required to insert random uint64 values into newly allocated sets.
 The displayed times encompass the set allocation process.
@@ -158,7 +259,7 @@ Additionally, be aware of the lower bound of 10 bytes and the logarithmic scale 
 n = 1 ... 300 (step size +1, linear scale)
 ![Memory required to store an Element in a Set of Size n, n = 1 ... 300 (step size +1, linear scale)](https://github.com/user-attachments/assets/ba04f5cf-bca1-453b-9f90-e55d9ede58e5)
 
-### Searching Nodes in a Populated Set
+#### Searching Nodes in a Populated Set
 
 The following chart illustrates the time required to determine whether a random value is present in the set.
 The test driver maintains a 30% hit ratio, ensuring that 30% of the queried values are contained within the set, while the remaining 70% are not.
