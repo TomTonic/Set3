@@ -46,6 +46,11 @@ func makeStrings(size, count int) []string {
 	return out
 }
 
+// These benchmarks compare the shipping byte hash against the serial routine it
+// replaced, which lab/hashalt keeps runnable for exactly this purpose. Both
+// sides have to stay measurable or the claim in the README stops being checkable
+// by anyone who did not take the measurement.
+
 // BenchmarkHashThroughput measures independent hashes back to back, which is
 // what a stream of unrelated lookups produces: the processor can overlap one
 // hash with the next, so this reports how much *work* each routine is, not how
@@ -54,19 +59,19 @@ func BenchmarkHashThroughput(b *testing.B) {
 	for _, size := range []int{8, 12, 16, 20, 24, 32, 64} {
 		keys := makeStrings(size, 4096)
 		b.Run(fmt.Sprintf("len=%d", size), func(b *testing.B) {
+			b.Run("serial baseline", func(b *testing.B) {
+				var acc uint64
+				for i := 0; i < b.N; i++ {
+					s := keys[i&4095]
+					acc ^= hashalt.SerialString(unsafe.Pointer(&s), laneSeed)
+				}
+				laneSink ^= acc
+			})
 			b.Run("production HashString", func(b *testing.B) {
 				var acc uint64
 				for i := 0; i < b.N; i++ {
 					s := keys[i&4095]
 					acc ^= hashing.HashString(unsafe.Pointer(&s), laneSeed)
-				}
-				laneSink ^= acc
-			})
-			b.Run("lane-parallel", func(b *testing.B) {
-				var acc uint64
-				for i := 0; i < b.N; i++ {
-					s := keys[i&4095]
-					acc ^= hashalt.WHLaneString(unsafe.Pointer(&s), laneSeed)
 				}
 				laneSink ^= acc
 			})
@@ -82,19 +87,19 @@ func BenchmarkHashLatency(b *testing.B) {
 	for _, size := range []int{8, 12, 16, 20, 24, 32, 64} {
 		keys := makeStrings(size, 4096)
 		b.Run(fmt.Sprintf("len=%d", size), func(b *testing.B) {
+			b.Run("serial baseline", func(b *testing.B) {
+				h := laneSeed
+				for i := 0; i < b.N; i++ {
+					s := keys[h&4095]
+					h = hashalt.SerialString(unsafe.Pointer(&s), laneSeed)
+				}
+				laneSink ^= h
+			})
 			b.Run("production HashString", func(b *testing.B) {
 				h := laneSeed
 				for i := 0; i < b.N; i++ {
 					s := keys[h&4095]
 					h = hashing.HashString(unsafe.Pointer(&s), laneSeed)
-				}
-				laneSink ^= h
-			})
-			b.Run("lane-parallel", func(b *testing.B) {
-				h := laneSeed
-				for i := 0; i < b.N; i++ {
-					s := keys[h&4095]
-					h = hashalt.WHLaneString(unsafe.Pointer(&s), laneSeed)
 				}
 				laneSink ^= h
 			})
@@ -111,16 +116,16 @@ func BenchmarkFixedBlockLatency(b *testing.B) {
 	var k32 [32]byte
 
 	b.Run("16 bytes", func(b *testing.B) {
+		b.Run("serial baseline", func(b *testing.B) { benchFixed(b, unsafe.Pointer(&k16), hashalt.SerialBlock16) })
 		b.Run("production", func(b *testing.B) { benchFixed(b, unsafe.Pointer(&k16), hashing.HashAsByteArray[[16]byte]) })
-		b.Run("lane-parallel", func(b *testing.B) { benchFixed(b, unsafe.Pointer(&k16), hashalt.WHLaneBlock16) })
 	})
 	b.Run("24 bytes", func(b *testing.B) {
+		b.Run("serial baseline", func(b *testing.B) { benchFixed(b, unsafe.Pointer(&k24), hashalt.SerialBlock24) })
 		b.Run("production", func(b *testing.B) { benchFixed(b, unsafe.Pointer(&k24), hashing.HashAsByteArray[[24]byte]) })
-		b.Run("lane-parallel", func(b *testing.B) { benchFixed(b, unsafe.Pointer(&k24), hashalt.WHLaneBlock24) })
 	})
 	b.Run("32 bytes", func(b *testing.B) {
+		b.Run("serial baseline", func(b *testing.B) { benchFixed(b, unsafe.Pointer(&k32), hashalt.SerialBlock32) })
 		b.Run("production", func(b *testing.B) { benchFixed(b, unsafe.Pointer(&k32), hashing.HashAsByteArray[[32]byte]) })
-		b.Run("lane-parallel", func(b *testing.B) { benchFixed(b, unsafe.Pointer(&k32), hashalt.WHLaneBlock32) })
 	})
 }
 

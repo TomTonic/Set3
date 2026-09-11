@@ -52,7 +52,9 @@ func TestHashBytesBlockNoCollisionsSmallRange(t *testing.T) {
 		for j := 0; j < l; j++ {
 			b[j+8] = byte(j)
 		}
-		v := HashBytesBlock(0x1234567890ABCDEF, buf)
+		// b, not buf: the point is the slice that was just built, and hashing
+		// the whole scratch buffer made the varying tail irrelevant.
+		v := HashBytesBlock(0x1234567890ABCDEF, b)
 		if _, ok := seen[v]; ok {
 			t.Fatalf("collision at input %d produced value %#x", i, v)
 		}

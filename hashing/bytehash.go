@@ -1,50 +1,24 @@
 package hashing
 
 import (
-	"encoding/binary"
 	"hash/maphash"
 	"unsafe"
 )
 
-// HashBytesBlock hashes a byte slice using 64-bit block mixing.
-// It consumes 8-byte words with LittleEndian decoding and mixes each
-// block through splitmix64; the tail (0..7 bytes) is folded in and the
-// length is incorporated to avoid collisions for different-length inputs.
+// HashBytesBlock hashes a byte slice.
+//
+// It is the variable-length entry point into the lane-parallel body in
+// lanehash.go: short inputs are straight-line code, and only inputs past 32
+// bytes enter a loop. See that file for why the shape is what it is.
+//
+// The hash depends on the platform's endianness — it is a hash table's hash,
+// not a wire format — and it is deterministic within a process family: the same
+// bytes and the same seed always give the same value.
 func HashBytesBlock(seed uint64, b []byte) uint64 {
-	h := seed ^ P0
-	i, n := 0, len(b)
-	for i+8 <= n {
-		v := binary.NativeEndian.Uint64(b[i:])
-		h = WH64Det(v, h)
-		i += 8
+	if len(b) == 0 {
+		return hashLaneBytes(nil, 0, seed)
 	}
-	// Tail 0..7 Bytes
-	var tail uint64
-	switch n - i {
-	case 7:
-		tail |= uint64(b[i+6]) << 48 //nolint:gosec
-		fallthrough
-	case 6:
-		tail |= uint64(b[i+5]) << 40 //nolint:gosec
-		fallthrough
-	case 5:
-		tail |= uint64(b[i+4]) << 32 //nolint:gosec
-		fallthrough
-	case 4:
-		tail |= uint64(b[i+3]) << 24 //nolint:gosec
-		fallthrough
-	case 3:
-		tail |= uint64(b[i+2]) << 16 //nolint:gosec
-		fallthrough
-	case 2:
-		tail |= uint64(b[i+1]) << 8 //nolint:gosec
-		fallthrough
-	case 1:
-		tail |= uint64(b[i]) //nolint:gosec
-	case 0:
-		tail = P1
-	}
-	return WH64Det(tail^uint64(n)*P2, h)
+	return hashLaneBytes(unsafe.Pointer(&b[0]), len(b), seed) //nolint:gosec
 }
 
 // HashAsByteArray handles fixed-size raw-byte-eligible values (for example
@@ -65,50 +39,18 @@ func HashAsByteArray[K comparable](p unsafe.Pointer, seed uint64) uint64 {
 	return HashBytesBlock(seed, b)
 }
 
-// HashString hashes a Go string by reading its bytes directly through
-// pointer arithmetic, avoiding slice creation and the function-call
-// overhead of HashBytesBlock.
+// HashString hashes a Go string by reading its bytes directly through pointer
+// arithmetic, avoiding slice creation.
+//
+// It shares its body with HashBytesBlock, so a string and a byte slice holding
+// the same bytes hash to the same value.
 func HashString(p unsafe.Pointer, seed uint64) uint64 {
 	s := *(*string)(p)
 	n := len(s)
-	h := seed ^ P0
 	if n == 0 {
-		return WH64Det(P1^uint64(n)*P2, h)
+		return hashLaneBytes(nil, 0, seed)
 	}
-	dp := unsafe.Pointer(unsafe.StringData(s)) //nolint:gosec
-	i := 0
-	for i+8 <= n {
-		v := *(*uint64)(unsafe.Add(dp, i)) //nolint:gosec
-		h = WH64Det(v, h)
-		i += 8
-	}
-	// Tail 0..7 bytes – same encoding as HashBytesBlock
-	var tail uint64
-	switch n - i {
-	case 7:
-		tail |= uint64(*(*byte)(unsafe.Add(dp, i+6))) << 48 //nolint:gosec
-		fallthrough
-	case 6:
-		tail |= uint64(*(*byte)(unsafe.Add(dp, i+5))) << 40 //nolint:gosec
-		fallthrough
-	case 5:
-		tail |= uint64(*(*byte)(unsafe.Add(dp, i+4))) << 32 //nolint:gosec
-		fallthrough
-	case 4:
-		tail |= uint64(*(*byte)(unsafe.Add(dp, i+3))) << 24 //nolint:gosec
-		fallthrough
-	case 3:
-		tail |= uint64(*(*byte)(unsafe.Add(dp, i+2))) << 16 //nolint:gosec
-		fallthrough
-	case 2:
-		tail |= uint64(*(*byte)(unsafe.Add(dp, i+1))) << 8 //nolint:gosec
-		fallthrough
-	case 1:
-		tail |= uint64(*(*byte)(unsafe.Add(dp, i))) //nolint:gosec
-	case 0:
-		tail = P1
-	}
-	return WH64Det(tail^uint64(n)*P2, h)
+	return hashLaneBytes(unsafe.Pointer(unsafe.StringData(s)), n, seed) //nolint:gosec
 }
 
 // HashFallbackMaphash is the generic fallback hasher which uses stdlib

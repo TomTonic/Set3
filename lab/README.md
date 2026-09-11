@@ -49,7 +49,7 @@ demand).
 
 | Package | What it is |
 | --- | --- |
-| [`hashalt/`](hashalt) | Hash functions that Set3 does *not* use — candidates that lost the comparison, or were never finished. Kept so the choice stays reviewable. |
+| [`hashalt/`](hashalt) | Hash functions that Set3 does *not* use — candidates that lost the comparison, were never finished, or were superseded. The `Serial*` routines are the byte-block hashes the lane-parallel ones replaced, kept runnable so the speed claim stays checkable. |
 | [`hashbench/`](hashbench) | Shared plumbing for the hash experiments: data generators, statistics, small PRNGs. |
 | [`hashquality/`](hashquality) | Distribution, uniformity, avalanche and ranking suites over `hashalt` and the production functions. Some suites run for tens of minutes. |
 | [`hashperf/`](hashperf) | Runtime A/B comparisons of hash functions via `rtcompare`. |

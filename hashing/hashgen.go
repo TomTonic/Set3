@@ -1,7 +1,6 @@
 package hashing
 
 import (
-	"encoding/binary"
 	"math"
 	"reflect"
 	"sync"
@@ -487,71 +486,39 @@ func fixedSizeByteBlockHasher(size int) HashFunction {
 	}
 }
 
-// hashByteBlock12 avoids the generic block loop for the common 12-byte case.
-func hashByteBlock12(p unsafe.Pointer, seed uint64) uint64 {
-	b := unsafe.Slice((*byte)(p), 12) //nolint:gosec
-	h := seed ^ P0
-	h = WH64Det(binary.NativeEndian.Uint64(b[:8]), h)
-	tail := uint64(binary.NativeEndian.Uint32(b[8:12]))
-	lengthMix := uint64(len(b)) * uint64(P2)
-	return WH64Det(tail^lengthMix, h)
-}
+// The fixed-size helpers below are the lane-parallel body of lanehash.go with
+// the length pinned to a constant.
+//
+// Writing them as specializations rather than as six hand-unrolled routines
+// makes them equal to the generic path by construction: a [24]byte array and a
+// 24-byte slice hash alike because they run the same code, not because someone
+// kept two transcriptions in step. TestFixedBlockHelpersAreTheGenericPath pins
+// that for every size.
+//
+// The bodies they call are past the inliner's budget, so each of these is a
+// direct call rather than straight-line code. Spelling the read windows out
+// here to buy that back was measured and gained nothing — at this size the
+// dispatch through the HashFunction value costs more than the call does — so
+// the simpler form is the one that ships.
 
-// hashByteBlock16 avoids the generic block loop for the common 16-byte case.
-func hashByteBlock16(p unsafe.Pointer, seed uint64) uint64 {
-	b := unsafe.Slice((*byte)(p), 16) //nolint:gosec
-	h := seed ^ P0
-	h = WH64Det(binary.NativeEndian.Uint64(b[:8]), h)
-	h = WH64Det(binary.NativeEndian.Uint64(b[8:16]), h)
-	lengthMix := uint64(len(b)) * uint64(P2)
-	return WH64Det(uint64(P1)^lengthMix, h)
-}
+// hashByteBlock12 hashes exactly 12 bytes.
+func hashByteBlock12(p unsafe.Pointer, seed uint64) uint64 { return laneShort(p, 12, seed) }
 
-// hashByteBlock20 avoids the generic block loop for the common 20-byte case.
-func hashByteBlock20(p unsafe.Pointer, seed uint64) uint64 {
-	b := unsafe.Slice((*byte)(p), 20) //nolint:gosec
-	h := seed ^ P0
-	h = WH64Det(binary.NativeEndian.Uint64(b[:8]), h)
-	h = WH64Det(binary.NativeEndian.Uint64(b[8:16]), h)
-	tail := uint64(binary.NativeEndian.Uint32(b[16:20]))
-	lengthMix := uint64(len(b)) * uint64(P2)
-	return WH64Det(tail^lengthMix, h)
-}
+// hashByteBlock16 hashes exactly 16 bytes.
+func hashByteBlock16(p unsafe.Pointer, seed uint64) uint64 { return laneShort(p, 16, seed) }
 
-// hashByteBlock24 avoids the generic block loop for the common 24-byte case.
-func hashByteBlock24(p unsafe.Pointer, seed uint64) uint64 {
-	b := unsafe.Slice((*byte)(p), 24) //nolint:gosec
-	h := seed ^ P0
-	h = WH64Det(binary.NativeEndian.Uint64(b[:8]), h)
-	h = WH64Det(binary.NativeEndian.Uint64(b[8:16]), h)
-	h = WH64Det(binary.NativeEndian.Uint64(b[16:24]), h)
-	lengthMix := uint64(len(b)) * uint64(P2)
-	return WH64Det(uint64(P1)^lengthMix, h)
-}
+// hashByteBlock20 hashes exactly 20 bytes.
+func hashByteBlock20(p unsafe.Pointer, seed uint64) uint64 { return laneMedium(p, 20, seed) }
 
-// hashByteBlock28 avoids the generic block loop for the common 28-byte case.
-func hashByteBlock28(p unsafe.Pointer, seed uint64) uint64 {
-	b := unsafe.Slice((*byte)(p), 28) //nolint:gosec
-	h := seed ^ P0
-	h = WH64Det(binary.NativeEndian.Uint64(b[:8]), h)
-	h = WH64Det(binary.NativeEndian.Uint64(b[8:16]), h)
-	h = WH64Det(binary.NativeEndian.Uint64(b[16:24]), h)
-	tail := uint64(binary.NativeEndian.Uint32(b[24:28]))
-	lengthMix := uint64(len(b)) * uint64(P2)
-	return WH64Det(tail^lengthMix, h)
-}
+// hashByteBlock24 hashes exactly 24 bytes, the size of a three-field uint64
+// struct key and the shape the raw-block hasher sees most often.
+func hashByteBlock24(p unsafe.Pointer, seed uint64) uint64 { return laneMedium(p, 24, seed) }
 
-// hashByteBlock32 avoids the generic block loop for the common 32-byte case.
-func hashByteBlock32(p unsafe.Pointer, seed uint64) uint64 {
-	b := unsafe.Slice((*byte)(p), 32) //nolint:gosec
-	h := seed ^ P0
-	h = WH64Det(binary.NativeEndian.Uint64(b[:8]), h)
-	h = WH64Det(binary.NativeEndian.Uint64(b[8:16]), h)
-	h = WH64Det(binary.NativeEndian.Uint64(b[16:24]), h)
-	h = WH64Det(binary.NativeEndian.Uint64(b[24:32]), h)
-	lengthMix := uint64(len(b)) * uint64(P2)
-	return WH64Det(uint64(P1)^lengthMix, h)
-}
+// hashByteBlock28 hashes exactly 28 bytes.
+func hashByteBlock28(p unsafe.Pointer, seed uint64) uint64 { return laneMedium(p, 28, seed) }
+
+// hashByteBlock32 hashes exactly 32 bytes.
+func hashByteBlock32(p unsafe.Pointer, seed uint64) uint64 { return laneMedium(p, 32, seed) }
 
 // ── Inline hash helpers ─────────────────────────────────────────────────────
 

@@ -215,10 +215,23 @@ workload with it held fixed: `uint64` goes from −22 … +2% to +20 … +34%.
 
 String keys are Set3's weakest case even at matched occupancy. About half the
 cost of a small-set string lookup is the hash itself (3.9 ns of 7.6), and
-`BenchmarkStringHashRoutes` in the suite puts Set3's routine at 3.93 ns against
-the runtime's 3.55 ns for a 20-byte key. That gap is small; what is left is a
-serial dependency chain of widening multiplies that the routine could break and
-currently does not.
+`BenchmarkStringHashRoutes` in the suite puts the routine these charts were
+measured with at 3.93 ns against the runtime's 3.55 ns for a 20-byte key. That
+gap is small; what dominated it was a serial dependency chain of widening
+multiplies — an N-word key cost 2N multiplies that the processor could not
+overlap, because each one needed the previous one's result.
+
+That chain is gone. The byte routines now consume words in independent lanes and
+combine them once at the end, so a key is two levels of multiply deep instead of
+2N. Measured as latency, where nothing can overlap: a 24-byte struct key falls
+from 8.47 ns to 3.53 ns, a 32-byte one from 10.48 to 3.40, a 24-byte string from
+10.55 to 5.66 and a 64-byte string from 20.56 to 9.12. `lab/hashperf` keeps the
+superseded routine runnable as the baseline so the comparison stays checkable.
+
+**The charts above predate that change** and have not been re-measured; the
+lookup rows for string and struct keys should improve, and nothing else should
+move. What the change is worth inside a full lookup is a separate measurement
+from what it is worth to the hash.
 
 ![Set3 vs map[struct]struct{}](lab/results/setcompare/speedup-struct3x64.svg)
 
