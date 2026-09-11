@@ -567,7 +567,7 @@ func TestMakeRoomGrowsOnlyWhenTheElementsNeedIt(t *testing.T) {
 			set.Remove(i)
 		}
 		require.Positive(t, set.dead, "the removals left no tombstones, so this case is not being tested")
-		require.LessOrEqual(t, set.Size(), set.elementLimit/4*3,
+		require.LessOrEqual(t, uint64(set.Size())*growthDenominator, uint64(set.elementLimit)*growthNumerator,
 			"the set is not below the threshold makeRoom decides on, so this case is not being tested")
 
 		groups := len(set.groupCtrl)

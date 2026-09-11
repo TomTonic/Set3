@@ -49,9 +49,43 @@ import (
 	"github.com/TomTonic/Set3/internal/prime"
 )
 
+// The two numbers that decide how much memory a set spends per element, and
+// the rule that keeps a churning set from drifting away from them.
+//
+// set3maxAvgGroupLoad is the operating point: a group holds eight slots and the
+// table is allowed to fill 6.5 of them on average, so a set runs at about 81%
+// occupancy against a native map's 47%. That is the whole of Set3's memory
+// advantage together with the unpadded slot, and it is also what makes its
+// probe sequences longer. RehashToCapacity moves the point per set; this is the
+// default it starts from.
+//
+// growthNumerator/growthDenominator is what keeps a set that removes as often
+// as it inserts from quietly leaving that operating point. The insert path
+// grows the table when resident reaches elementLimit, and resident counts every
+// slot that is not empty — tombstones included. Remove can clear a slot outright
+// only when its group still has an empty slot to terminate probes with, and in a
+// full table it usually does not; it leaves a tombstone instead. Add reuses a
+// tombstone only when one happens to lie on the probe path of the element being
+// inserted. So a sliding window whose element count never changes still pushes
+// resident up, and a table that grew on that pressure has spent memory on
+// nothing.
+//
+// Measured before this rule existed: a window of 262 144 uint64 keys grew its
+// table 2.25x over twenty window turns and settled at 36% occupancy with 43% of
+// its non-empty slots tombstones. With it, the same workload holds one size at
+// 54% occupancy.
+//
+// The fraction is a space/time knob like the load factor above, and it points
+// the other way: a smaller one grows more readily and settles lower, which is
+// faster and larger. Three quarters leaves at least a quarter of the limit free
+// after an in-place rehash, which is what stops a set rehashing on nearly every
+// insert. Abseil draws the same line at 25/32.
 const (
 	set3groupSize       = 8
 	set3maxAvgGroupLoad = 6.5
+
+	growthNumerator   = 3
+	growthDenominator = 4
 
 	set3loBits uint64 = 0x0101010101010101
 	set3hiBits uint64 = 0x8080808080808080
@@ -575,37 +609,27 @@ func (thisSet *Set3[T]) ToArray() []T {
 }
 
 // makeRoom is called when the table has run out of free slots. It decides
-// whether that means the set has too many elements or merely too many
-// tombstones, and only grows in the first case.
+// whether that means the set holds too many elements or merely too many
+// tombstones, and only grows in the first case — see the growth-policy note on
+// the constants at the top of this file for why the distinction exists and what
+// the fraction costs.
 //
-// The distinction matters because resident counts every slot that is not empty,
-// tombstones included, while Size counts only live elements. A workload that
-// removes as often as it inserts — a sliding window, a cache, a work queue —
-// keeps Size constant and still drives resident upwards: Remove can only clear
-// a slot outright when its group has an empty slot to terminate probes with,
-// and in a full table it usually does not, so it leaves a tombstone instead.
-// Add then reuses a tombstone only if one happens to lie on the probe path of
-// the element being inserted.
-//
-// Growing on that pressure is the wrong answer twice over. It doubles the
-// memory of a set whose element count never changed, and it only postpones the
-// problem: measured before this existed, a window of 262 144 uint64 keys grew
-// its table 2.25x over twenty window turns and settled at 36% occupancy with
-// 43% of its non-empty slots tombstones. Rehashing at the same size costs one
-// pass and gives every one of those slots back.
-//
-// The three-quarters bound is what keeps this from thrashing. After an in-place
-// rehash resident equals Size, so the next trigger is at least a quarter of the
-// limit away; without a margin the set could rehash on nearly every insert.
-// Abseil draws the same line at 25/32 for the same reason.
+// It is deliberately not part of Add. Add carries the probe loop and is far past
+// the inliner's budget either way, but keeping the rehash decision out of its
+// body still measurably shrinks it: 454 against 522 with the decision inlined.
+// Nothing here runs on the insert path — reaching this function already means an
+// O(n) rehash is about to happen.
 func (thisSet *Set3[T]) makeRoom() {
-	if thisSet.Size() <= thisSet.elementLimit/4*3 {
-		// Tombstones, not elements. Rehash at the current size to drop them.
-		thisSet.rehashToNumGroups(uint32(len(thisSet.groupCtrl))) //nolint:gosec
+	groupCount := uint32(len(thisSet.groupCtrl)) //nolint:gosec
+	// Size() <= elementLimit * 3/4, cross-multiplied so that the rehash path
+	// carries no division, and widened so that a table with more than 2^30
+	// slots cannot overflow the comparison.
+	if uint64(thisSet.Size())*growthDenominator <= uint64(thisSet.elementLimit)*growthNumerator {
+		// Tombstones, not elements. Rehashing at the current size drops them.
+		thisSet.rehashToNumGroups(groupCount)
 		return
 	}
-	nextGroupCount := calcNextGroupCount(uint32(len(thisSet.groupCtrl))) //nolint:gosec
-	thisSet.rehashToNumGroups(nextGroupCount)
+	thisSet.rehashToNumGroups(calcNextGroupCount(groupCount))
 }
 
 /*
