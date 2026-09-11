@@ -62,7 +62,7 @@ var memoryHeader = []string{
 // scenario documentation, so a CSV found in the repository can be read without
 // guessing what produced it. Returns the paths written, and an error from the
 // first file that could not be written.
-func WriteResults(cfg Config, runtimeRows []RuntimeResult, memoryRows []MemoryResult, elapsed time.Duration) ([]string, error) {
+func WriteResults(cfg Config, runtimeRows []RuntimeResult, memoryRows []MemoryResult, curve []LoadCurvePoint, elapsed time.Duration) ([]string, error) {
 	if err := os.MkdirAll(cfg.OutDir, 0o755); err != nil {
 		return nil, fmt.Errorf("create %s: %w", cfg.OutDir, err)
 	}
@@ -83,8 +83,16 @@ func WriteResults(cfg Config, runtimeRows []RuntimeResult, memoryRows []MemoryRe
 		written = append(written, path)
 	}
 
+	if len(curve) > 0 {
+		path := filepath.Join(cfg.OutDir, "loadcurve.csv")
+		if err := writeCSV(path, loadCurveHeader, loadCurveRecords(curve)); err != nil {
+			return written, err
+		}
+		written = append(written, path)
+	}
+
 	path := filepath.Join(cfg.OutDir, "run.txt")
-	if err := os.WriteFile(path, []byte(manifest(cfg, runtimeRows, memoryRows, elapsed)), 0o600); err != nil {
+	if err := os.WriteFile(path, []byte(manifest(cfg, runtimeRows, memoryRows, curve, elapsed)), 0o600); err != nil {
 		return written, fmt.Errorf("write %s: %w", path, err)
 	}
 	return append(written, path), nil
@@ -142,6 +150,8 @@ func memoryRowsToRecords(rows []MemoryResult) [][]string {
 
 func f(v float64, digits int) string { return strconv.FormatFloat(v, 'f', digits, 64) }
 
+func itoa(v int) string { return strconv.Itoa(v) }
+
 func b(v bool) string { return strconv.FormatBool(v) }
 
 // clean makes a free-text note safe for a separator-joined line.
@@ -152,14 +162,14 @@ func clean(s string) string {
 }
 
 // manifest renders everything needed to interpret the CSVs later.
-func manifest(cfg Config, runtimeRows []RuntimeResult, memoryRows []MemoryResult, elapsed time.Duration) string {
+func manifest(cfg Config, runtimeRows []RuntimeResult, memoryRows []MemoryResult, curve []LoadCurvePoint, elapsed time.Duration) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "Set3 vs. map[T]struct{} — rtcompare suite\n")
 	fmt.Fprintf(&b, "generated: %s\n", time.Now().Format(time.RFC3339))
 	fmt.Fprintf(&b, "elapsed:   %s\n", elapsed.Round(time.Second))
 	fmt.Fprintf(&b, "go:        %s %s/%s, %d CPUs\n", runtime.Version(), runtime.GOOS, runtime.GOARCH, runtime.NumCPU())
 	fmt.Fprintf(&b, "config:    %s\n", cfg)
-	fmt.Fprintf(&b, "rows:      %d runtime, %d memory\n\n", len(runtimeRows), len(memoryRows))
+	fmt.Fprintf(&b, "rows:      %d runtime, %d memory, %d load-curve\n\n", len(runtimeRows), len(memoryRows), len(curve))
 
 	b.WriteString("Reading a runtime row\n")
 	b.WriteString("  delta_pct is positive when Set3 is faster. ci_low_pct/ci_high_pct bound it at\n")
@@ -172,6 +182,12 @@ func manifest(cfg Config, runtimeRows []RuntimeResult, memoryRows []MemoryResult
 	for _, s := range Workloads {
 		fmt.Fprintf(&b, "  %-15s %s\n", s.name, s.doc)
 	}
+	b.WriteString("\nThe load curve\n")
+	b.WriteString("  loadcurve.csv measures Set3 at several occupancies and the native map once,\n")
+	b.WriteString("  each as a (bytes per element, nanoseconds per lookup) pair. Set3 has\n")
+	b.WriteString("  RehashToCapacity, so its operating point is a parameter; the native map has\n")
+	b.WriteString("  no such knob and is a single point. Read it as a curve against a point:\n")
+	b.WriteString("  the question is not which is faster but which is faster at what price.\n")
 	b.WriteString("\nMemory shapes\n")
 	b.WriteString("  presized      created at the right capacity, then filled\n")
 	b.WriteString("  grown         created empty, then filled — includes whatever capacity growth landed on\n")

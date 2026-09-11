@@ -57,6 +57,41 @@ type memoryRow struct {
 	mapBuild    float64
 }
 
+// loadCurveRow is one row of loadcurve.csv: one operating point, either a
+// point on Set3's space/time curve or the native map's single point.
+type loadCurveRow struct {
+	keyType  string
+	size     int
+	impl     string
+	load     float64
+	bytes    float64
+	ns       float64
+	delta    float64
+	resolved bool
+}
+
+// loadLoadCurve reads loadcurve.csv.
+func loadLoadCurve(path string) ([]loadCurveRow, error) {
+	t, err := readTable(path)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]loadCurveRow, 0, len(t.rows))
+	for _, r := range t.rows {
+		out = append(out, loadCurveRow{
+			keyType:  t.str(r, "keytype"),
+			size:     t.int(r, "size"),
+			impl:     t.str(r, "impl"),
+			load:     t.num(r, "load"),
+			bytes:    t.num(r, "bytes_per_element"),
+			ns:       t.num(r, "ns_per_lookup"),
+			delta:    t.num(r, "delta_pct"),
+			resolved: t.flag(r, "resolved"),
+		})
+	}
+	return out, nil
+}
+
 // table is a parsed separator-delimited file addressed by column name, so that
 // adding a column to the suite's output does not renumber anything here.
 type table struct {

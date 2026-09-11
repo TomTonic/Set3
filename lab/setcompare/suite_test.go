@@ -194,6 +194,7 @@ func TestCompareSuite(t *testing.T) {
 	started := time.Now()
 	var runtimeRows []RuntimeResult
 	var memoryRows []MemoryResult
+	var curvePoints []LoadCurvePoint
 
 	if !cfg.SkipRuntime {
 		t.Log("=== runtime pass ===")
@@ -203,9 +204,13 @@ func TestCompareSuite(t *testing.T) {
 		t.Log("=== memory pass ===")
 		memoryRows = MeasureMemory(cfg, func(format string, args ...any) { t.Logf(format, args...) })
 	}
+	if !cfg.SkipLoadCurve {
+		t.Log("=== load curve pass ===")
+		curvePoints = MeasureLoadCurve(cfg, func(format string, args ...any) { t.Logf(format, args...) })
+	}
 
 	elapsed := time.Since(started)
-	written, err := WriteResults(cfg, runtimeRows, memoryRows, elapsed)
+	written, err := WriteResults(cfg, runtimeRows, memoryRows, curvePoints, elapsed)
 	if err != nil {
 		t.Fatalf("writing results: %v", err)
 	}
@@ -216,6 +221,9 @@ func TestCompareSuite(t *testing.T) {
 	}
 	if len(memoryRows) > 0 {
 		t.Log("\n" + SummarizeMemory(memoryRows))
+	}
+	if len(curvePoints) > 0 {
+		t.Log("\n" + SummarizeLoadCurve(curvePoints))
 	}
 	for _, path := range written {
 		t.Logf("wrote %s", path)

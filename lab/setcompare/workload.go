@@ -105,13 +105,20 @@ type Workload struct {
 // candidates wraps the two batch functions as rtcompare candidates, named so
 // that an error message from the harness says which side failed.
 func (w *Workload) candidates() (set3, native rtcompare.Candidate) {
-	return rtcompare.Candidate{
-			Name:  "Set3[" + w.KeyType + "]",
-			Batch: w.Set3Batch,
-		}, rtcompare.Candidate{
-			Name:  "map[" + w.KeyType + "]struct{}",
-			Batch: w.MapBatch,
-		}
+	// Written as two statements rather than one multi-value return with inline
+	// composite literals: gofmt double-indents that form, and golangci-lint's
+	// own formatter disagrees with gofmt about it, so the shape is a standing
+	// CI failure waiting for a linter upgrade. This one formats identically
+	// under both.
+	set3 = rtcompare.Candidate{
+		Name:  "Set3[" + w.KeyType + "]",
+		Batch: w.Set3Batch,
+	}
+	native = rtcompare.Candidate{
+		Name:  "map[" + w.KeyType + "]struct{}",
+		Batch: w.MapBatch,
+	}
+	return set3, native
 }
 
 // scenarioInfo is the static description of one workload family: what it

@@ -19,6 +19,7 @@ package main
 import (
 	"fmt"
 	"math"
+	"sort"
 )
 
 // point is one data point in a line panel.
@@ -348,6 +349,8 @@ func drawLinePanel(c *canvas, x, y, w, h float64, title, unit string, ss []serie
 // formatTick renders an axis value without more digits than it deserves.
 func formatTick(v float64) string {
 	switch {
+	case v == 0:
+		return "0"
 	case v >= 1000:
 		return shortCount(int(v))
 	case v >= 10:
@@ -357,4 +360,127 @@ func formatTick(v float64) string {
 	default:
 		return fmt.Sprintf("%.2f", v)
 	}
+}
+
+// loadCurveChart draws the chart this whole comparison was building towards:
+// Set3's space/time curve against the native map's single point.
+//
+// Both axes are costs, so down and to the left is better and the picture reads
+// without a legend: the shaded rectangle is everything cheaper than the native
+// map on *both* axes at once, and every Set3 point inside it is a setting at
+// which Set3 is smaller and faster simultaneously. The native map has no
+// equivalent knob — it is one point, which is the whole reason the comparison
+// needed a curve rather than a number.
+//
+// Points are labelled with the occupancy that produced them, because the
+// actionable output is not "Set3 is faster" but "call RehashToCapacity with
+// this much headroom".
+func loadCurveChart(rows []loadCurveRow, keyType, subtitle string) *canvas {
+	rows = filter(rows, func(r loadCurveRow) bool { return r.keyType == keyType })
+	if len(rows) == 0 {
+		return nil
+	}
+	sizes := distinct(rows, func(r loadCurveRow) int { return r.size })
+
+	const (
+		cols    = 2
+		panelW  = 420
+		panelH  = 300
+		marginX = 24
+		gapX    = 16
+		gapY    = 40
+		headerH = 100
+		footerH = 62
+	)
+	panelRows := (len(sizes) + cols - 1) / cols
+	width := float64(marginX*2 + cols*panelW + (cols-1)*gapX)
+	height := headerH + float64(panelRows)*(panelH+gapY) + footerH
+
+	c := newCanvas(width, height)
+	chartHeader(c, "The price of speed — key type "+keyType, subtitle)
+	legendRow(c, 24, 82, []series{
+		{name: "Set3, at a range of occupancies", color: colSet3},
+		{name: "map[T]struct{} (one fixed point)", color: colMap},
+		{name: "cheaper than the map on both axes", color: colNoise},
+	})
+
+	for i, size := range sizes {
+		px := marginX + float64(i%cols)*(panelW+gapX)
+		py := headerH + float64(i/cols)*(panelH+gapY)
+		drawLoadCurvePanel(c, px, py, panelW, panelH, size,
+			filter(rows, func(r loadCurveRow) bool { return r.size == size }))
+	}
+	footnote(c, height-44, []string{
+		"Set3's occupancy is set with RehashToCapacity; the native map has no such control. Lookups at a 30% hit rate.",
+		"Memory is retained heap per element after a full collection. Both axes are costs, so lower and further left is better.",
+	})
+	return c
+}
+
+// drawLoadCurvePanel draws one (key type, size) panel of the load curve.
+func drawLoadCurvePanel(c *canvas, x, y, w, h float64, size int, rows []loadCurveRow) {
+	const (
+		padLeft   = 54
+		padRight  = 18
+		padTop    = 36
+		padBottom = 44
+	)
+	c.rect(x, y, w, h, colPanel, colGrid, 1)
+	c.text(x+10, y+21, "n = "+shortCount(size), 12, colText, "start", "600")
+	c.text(x+w-10, y+21, "ns per lookup  ×  bytes per element", 10, colMuted, "end", "400")
+
+	var mapRow *loadCurveRow
+	var set3 []loadCurveRow
+	maxBytes, maxNs := 0.0, 0.0
+	for i, r := range rows {
+		if r.impl == "map" {
+			mapRow = &rows[i]
+		} else if r.ns > 0 {
+			set3 = append(set3, r)
+		}
+		maxBytes = math.Max(maxBytes, r.bytes)
+		maxNs = math.Max(maxNs, r.ns)
+	}
+	if mapRow == nil || len(set3) == 0 {
+		return
+	}
+
+	left, right := x+padLeft, x+w-padRight
+	top, bottom := y+padTop, y+h-padBottom
+	xs := newLinearScale(0, maxBytes*1.1, left, right)
+	ys := newLinearScale(0, maxNs*1.15, bottom, top)
+
+	// Everything cheaper than the map on both axes at once.
+	c.rect(left, ys.at(mapRow.ns), xs.at(mapRow.bytes)-left, bottom-ys.at(mapRow.ns), colNoise, "", 0)
+
+	for _, t := range ys.niceTicks(4) {
+		ty := ys.at(t)
+		c.line(left, ty, right, ty, colGrid, 1, "")
+		c.text(left-7, ty+4, formatTick(t), 10, colMuted, "end", "400")
+	}
+	for _, t := range xs.niceTicks(5) {
+		tx := xs.at(t)
+		c.line(tx, bottom, tx, bottom+4, colAxis, 1, "")
+		c.text(tx, bottom+17, formatTick(t), 10, colMuted, "middle", "400")
+	}
+	c.line(left, bottom, right, bottom, colAxis, 1, "")
+	c.text((left+right)/2, bottom+34, "bytes per element", 10, colMuted, "middle", "400")
+
+	// The curve, drawn from the memory-hungry end to the frugal one so the
+	// polyline runs left to right.
+	sort.Slice(set3, func(i, j int) bool { return set3[i].bytes < set3[j].bytes })
+	pts := make([][2]float64, 0, len(set3))
+	for _, r := range set3 {
+		pts = append(pts, [2]float64{xs.at(r.bytes), ys.at(r.ns)})
+	}
+	c.polyline(pts, colSet3, 2)
+	for i, r := range set3 {
+		c.circle(pts[i][0], pts[i][1], 3.5, colSet3)
+		c.text(pts[i][0], pts[i][1]-9, fmt.Sprintf("%.2f", r.load), 9, colSet3, "middle", "600")
+	}
+
+	// The map, as a square so it cannot be mistaken for a point on the curve.
+	mx, my := xs.at(mapRow.bytes), ys.at(mapRow.ns)
+	c.rect(mx-4.5, my-4.5, 9, 9, colMap, "", 0)
+	c.text(mx-9, my-9, "map", 10, colMap, "end", "600")
 }

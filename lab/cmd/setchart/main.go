@@ -77,8 +77,16 @@ func run(inDir, outDir, subtitle string) error {
 	if err != nil {
 		return err
 	}
-	if len(runtimeRows) == 0 && len(memoryRows) == 0 {
-		return fmt.Errorf("neither runtime.csv nor memory.csv found in %s", inDir)
+	curveRows, err := loadIfPresent(filepath.Join(inDir, "loadcurve.csv"), loadLoadCurve)
+	if err != nil {
+		return err
+	}
+	if len(runtimeRows) == 0 && len(memoryRows) == 0 && len(curveRows) == 0 {
+		return fmt.Errorf("no runtime.csv, memory.csv or loadcurve.csv found in %s", inDir)
+	}
+
+	for _, keyType := range distinct(curveRows, func(r loadCurveRow) string { return r.keyType }) {
+		written = append(written, save(outDir, "loadcurve-"+keyType+".svg", loadCurveChart(curveRows, keyType, subtitle)))
 	}
 
 	// Deliberately not sorted: the order here is the order the snippet embeds

@@ -15,6 +15,20 @@ Without the tag the Go tool does not see these packages at all — `go list ./..
 does not name them, `go test ./...` does not run them, and coverage does not
 count them. With the tag everything is compiled, vetted, linted, and runnable.
 
+## Which Go the lab runs on
+
+Whatever `go.mod` requires, which is Go 1.27 or newer. That is a deliberate
+floor for the whole module, not just for the lab, and it matters here for one
+reason worth knowing when comparing old numbers with new: Go 1.27 generates
+size-specialized allocation routines for objects under 80 bytes, cutting the
+cost of small allocations by up to 30%. A comparison of two containers is
+partly a comparison of their allocation behaviour, so a measurement taken on an
+older toolchain describes a different runtime.
+
+`run.txt` records the toolchain every measurement was taken on, so a recorded
+result always says which runtime it describes. To check whether that change is
+what moved a number, `GOEXPERIMENT=nosizespecializedmalloc` turns it back off.
+
 ## Running it
 
 ```sh
