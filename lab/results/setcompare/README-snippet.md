@@ -6,34 +6,34 @@ go1.27.1 linux/amd64, 24 CPUs · measured 2026-09-11 · rtcompare, 95% intervals
 
 | Workload | key type | sizes measured | Set3 vs. native map | resolved |
 | --- | --- | --- | --- | --- |
-| `build-presized` | uint64 | 1k – 2.1M | +38% to +69% | 4/4 |
-| `build-presized` | string | 1k – 2.1M | +25% to +61% | 4/4 |
-| `build-presized` | struct3x64 | 1k – 2.1M | +47% to +71% | 4/4 |
-| `build-growing` | uint64 | 1k – 2.1M | +34% to +48% | 4/4 |
-| `build-growing` | string | 1k – 2.1M | +5% to +23% | 4/4 |
-| `dedup-stream` | uint64 | 1k – 2.1M | +21% to +36% | 4/4 |
-| `dedup-stream` | string | 1k – 2.1M | -9% to 0% | 2/4 |
-| `dedup-stream` | struct3x64 | 1k – 2.1M | +19% to +44% | 4/4 |
-| `lookup-hit30` | uint64 | 1k – 2.1M | -22% to +2% | 4/4 |
-| `lookup-hit30` | string | 1k – 2.1M | -39% to -14% | 4/4 |
-| `lookup-hit30` | struct3x64 | 1k – 2.1M | -34% to +22% | 4/4 |
-| `lookup-hit95` | uint64 | 1k – 2.1M | +6% to +17% | 4/4 |
-| `lookup-hit95` | struct3x64 | 1k – 2.1M | -9% to +13% | 3/4 |
-| `lookup-hit30-eqload` | uint64 | 1k – 2.1M | +20% to +34% | 4/4 |
-| `lookup-hit30-eqload` | string | 1k – 2.1M | -13% to +8% | 3/4 |
-| `lookup-hit30-eqload` | struct3x64 | 1k – 2.1M | -9% to +16% | 4/4 |
-| `lookup-hit95-eqload` | uint64 | 1k – 2.1M | +9% to +29% | 3/4 |
-| `lookup-hit95-eqload` | struct3x64 | 1k – 2.1M | -6% to +5% | 2/4 |
+| `build-presized` | uint64 | 1k – 2.1M | +43% to +70% | 4/4 |
+| `build-presized` | string | 1k – 2.1M | +38% to +71% | 4/4 |
+| `build-presized` | struct3x64 | 1k – 2.1M | +56% to +73% | 4/4 |
+| `build-growing` | uint64 | 1k – 2.1M | +35% to +49% | 4/4 |
+| `build-growing` | string | 1k – 2.1M | +12% to +30% | 4/4 |
+| `dedup-stream` | uint64 | 1k – 2.1M | +24% to +34% | 4/4 |
+| `dedup-stream` | string | 1k – 2.1M | +1% to +12% | 3/4 |
+| `dedup-stream` | struct3x64 | 1k – 2.1M | +42% to +50% | 4/4 |
+| `lookup-hit30` | uint64 | 1k – 2.1M | -22% to +3% | 3/4 |
+| `lookup-hit30` | string | 1k – 2.1M | -26% to -3% | 3/4 |
+| `lookup-hit30` | struct3x64 | 1k – 2.1M | -11% to +15% | 4/4 |
+| `lookup-hit95` | uint64 | 1k – 2.1M | +4% to +20% | 3/4 |
+| `lookup-hit95` | struct3x64 | 1k – 2.1M | +19% to +38% | 4/4 |
+| `lookup-hit30-eqload` | uint64 | 1k – 2.1M | +21% to +35% | 4/4 |
+| `lookup-hit30-eqload` | string | 1k – 2.1M | +8% to +18% | 4/4 |
+| `lookup-hit30-eqload` | struct3x64 | 1k – 2.1M | +20% to +34% | 4/4 |
+| `lookup-hit95-eqload` | uint64 | 1k – 2.1M | +2% to +28% | 3/4 |
+| `lookup-hit95-eqload` | struct3x64 | 1k – 2.1M | +14% to +36% | 3/4 |
 | `sliding-window` | uint64 | 1k – 2.1M | +33% to +48% | 4/4 |
-| `sliding-window` | string | 1k – 2.1M | +22% to +36% | 4/4 |
-| `mixed-index` | uint64 | 1k – 2.1M | +9% to +25% | 4/4 |
-| `mixed-index` | string | 1k – 2.1M | -6% to +5% | 2/4 |
-| `graph-visited` | uint64 | 1k – 262k | +26% to +40% | 3/3 |
-| `intersect` | uint64 | 1k – 2.1M | +38% to +65% | 4/4 |
-| `intersect` | string | 1k – 2.1M | +10% to +40% | 4/4 |
-| `iterate` | uint64 | 1k – 2.1M | +68% to +77% | 4/4 |
-| `iterate` | string | 1k – 2.1M | +61% to +71% | 4/4 |
-| `iterate` | struct3x64 | 1k – 2.1M | +65% to +72% | 4/4 |
+| `sliding-window` | string | 1k – 2.1M | +30% to +39% | 4/4 |
+| `mixed-index` | uint64 | 1k – 2.1M | +7% to +26% | 4/4 |
+| `mixed-index` | string | 1k – 2.1M | -1% to +20% | 4/4 |
+| `graph-visited` | uint64 | 1k – 262k | +24% to +40% | 3/3 |
+| `intersect` | uint64 | 1k – 2.1M | +41% to +64% | 4/4 |
+| `intersect` | string | 1k – 2.1M | +17% to +49% | 4/4 |
+| `iterate` | uint64 | 1k – 2.1M | +68% to +75% | 4/4 |
+| `iterate` | string | 1k – 2.1M | +60% to +71% | 4/4 |
+| `iterate` | struct3x64 | 1k – 2.1M | +68% to +74% | 4/4 |
 
 Positive means Set3 is faster. A cell counts as resolved only when its interval excludes zero *and* the difference exceeds the machine's measured noise floor.
 

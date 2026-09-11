@@ -245,10 +245,7 @@ structural tests on top of that, including one that pins the read window to
 exactly the key and one that holds each fixed-size entry point equal to the
 generic path.
 
-**The charts above predate that change** and have not been re-measured; the
-lookup rows for string and struct keys should improve, and nothing else should
-move. What the change is worth inside a full lookup is a separate measurement
-from what it is worth to the hash.
+The charts above were measured after that change.
 
 ![Set3 vs map[struct]struct{}](lab/results/setcompare/speedup-struct3x64.svg)
 
@@ -299,35 +296,50 @@ mechanisms are separable: the padded slot is worth a factor of about 1.9
 whatever the occupancy, so even at an identical load factor Set3 holds roughly
 53% of the bytes. Only the rest is the tuning.
 
-One number here was a finding rather than a footnote, and it has since been
-fixed. The sliding window's 0.46 ratio against `presized`'s 0.31 was Set3's
-table growing under churn.
+The `window-steady` row costs 0.46 of the map's bytes against `presized`'s
+0.31, and that gap is not tombstones. It is one growth: the shape starts from
+`EmptyWithCapacity(size)`, which leaves the table at 98% of its limit, and a
+window needs free slots to keep probing short. One growth to 54% occupancy is
+the whole of the difference, and it is stable from the first window turn
+onwards.
 
-The cause was the growth trigger. `resident` counts every slot that is not
-empty, tombstones included, and the insert path grew the table whenever
-`resident` reached the limit. A workload that removes as often as it inserts
-keeps the element count constant and still drives `resident` upwards, because
-`Remove` can clear a slot outright only when its group has an empty slot to
-terminate probes with — in a full table it usually does not, and leaves a
-tombstone instead. So a window whose size never changed kept growing its
-backing store. Measured at 262 144 `uint64` keys over twenty window turns: the
-table grew **2.25×** and settled at 36% occupancy with 43% of its non-empty
-slots tombstones.
+There *is* a tombstone defect, it has been fixed, and this measurement does not
+show it — which is worth saying plainly, because the two were confused during
+the investigation. The insert path used to grow the table whenever `resident`
+reached the limit, and `resident` counts every slot that is not empty,
+tombstones included. `Remove` can clear a slot outright only when its group has
+an empty slot to terminate probes with, and in a full table it usually does not;
+it leaves a tombstone instead. `Add` reuses a tombstone only when one happens to
+lie on the probe path of the element being inserted.
+
+Whether that drifts depends on where the new keys come from, and the difference
+is stark. Measured at 262 144 `uint64` keys over twenty window turns:
+
+| key source | before | after |
+| ---------- | ------ | ----- |
+| a ring of `2n` keys cycled through | 16.62 B/element, 54% full | 16.62 B/element, 54% full |
+| fresh keys, never repeating | 24.94 B/element, 36% full, 204 122 tombstones | 16.62 B/element, 54% full, 53 034 tombstones |
+
+A re-inserted key hashes to the home group it had before and very often lands on
+its own tombstone, so a cyclic window reuses tombstones almost perfectly and
+never drifts. A cache, a work queue, or a deduplicator over a live stream sees
+keys it has never seen, each probing from a fresh home group, and those keys
+reuse a tombstone only by luck. That is the case that grew the table 2.25× while
+holding a constant number of elements.
 
 `Add` now asks which kind of pressure it is under. If the live element count is
 still at or below three quarters of the limit, the table is full of tombstones
 rather than elements, and one rehash at the *same* size gives every one of those
-slots back. Only a table that is genuinely full of elements grows. The same
-measurement now holds one size throughout, at 54% occupancy, with 11 in-place
-rehashes across 10.5 million window operations — about one per 3.6 window turns,
-and nothing allocated per operation in between.
+slots back. Only a table genuinely full of elements grows. The three quarters is
+a knob and points the other way from the load factor: a smaller fraction grows
+more readily and settles lower, which is faster and larger. Abseil draws the
+same line at 25/32.
 
-The three quarters is the knob, and it is a space/time one like every other
-number in this section: a lower threshold grows more readily and settles at a
-lower occupancy, which is faster and larger. At the current setting this
-workload costs about 28% more time per remove-and-insert cycle than the
-uncontrolled growth did, and about 33% less memory. Abseil draws the same line
-at 25/32 for the same reason.
+The suite does not currently have a fresh-key churn scenario — `sliding-window`
+cycles a ring, so it measures the cyclic column above and cannot see this at
+all. That is a gap in the suite rather than a property of the library, and it is
+why the fix is pinned by tests in `set3_tombstone_test.go` rather than by a row
+in these tables.
 
 Note also that these figures moved with Go itself. On the bucket map that this
 README's original 25% figure was taken on, `map[uint64]struct{}` cost about 12
@@ -351,12 +363,50 @@ direct call, which is then inlinable:
 ./hashing/hasher.go:41:13: PGO devirtualizing function call hashing.h.fn to hashing.HashI64WHdet
 ```
 
-Measured on `Set3[uint64]` (AMD Ryzen 9 7900, Go 1.26.8):
+On Go 1.27 it now devirtualizes the string and raw-block routines as well:
 
-| Benchmark              | no PGO    | with PGO  |       |
-| ---------------------- | --------- | --------- | ----- |
-| `Contains`             | 8.07 ns   | 6.77 ns   | -16%  |
-| `Add` (1000 elements)  | 9406 ns   | 8327 ns   | -11%  |
+```text
+./hashing/hasher.go:54:13: PGO devirtualizing function call hashing.h.fn to hashing.HashI64WHdet
+./hashing/hasher.go:54:13: PGO devirtualizing function call hashing.h.fn to hashing.HashString
+./hashing/bytehash.go:36:21: PGO devirtualizing function call hashing.specialized to hashing.hashByteBlock24
+```
+
+What that is worth was measured by running the whole comparison suite twice,
+once built without a profile and once with one, on the same quiet machine
+(AMD Ryzen 9 7900, Go 1.27.1, 1h22m per run). PGO is a property of the build, so
+this is the one comparison here that cannot be interleaved; what *is* interleaved
+is Set3 against the map inside each run, and the table below reports how that
+paired advantage moved between the two builds. Both candidates share a run's
+machine conditions, which is what makes the comparison survive the difference
+between one evening and the next.
+
+| Scenario              | cells | change in Set3's advantage |
+| --------------------- | ----- | -------------------------- |
+| `lookup-hit95`        | 7     | +4.3pp                     |
+| `mixed-index`         | 8     | +3.0pp                     |
+| `lookup-hit30`        | 9     | +2.8pp                     |
+| `dedup-stream`        | 11    | +2.4pp                     |
+| `build-presized`      | 12    | +2.0pp                     |
+| `sliding-window`      | 8     | +0.5pp                     |
+| `build-growing`       | 8     | -0.3pp                     |
+| `intersect`           | 8     | -2.6pp                     |
+| **all of the above**  | 92    | **+1.6pp**                 |
+
+The absolute nanoseconds agree with the paired figure from the other side: over
+the same cells PGO made Set3 1.9% faster and the map 0.4%, which is the same
+1.5pp of relative gain seen above. That is a smaller number than a
+microbenchmark of `Contains` alone would give, and both are true — a lookup in a
+real scenario does more than hash, so removing one indirect call is a smaller
+share of it.
+
+`iterate` is excluded from the table and from the totals. It reports -12.2pp,
+and the cause is the suite rather than the library: under this profile the
+benchmark's own accumulator escapes to the heap, because the batch is a closure
+stored in a struct and called indirectly. Compiling a plain
+`for e := range s.MutableRange()` loop in an ordinary consumer against the same
+profile shows identical escape analysis with and without PGO, so this is a
+measurement artifact and not something a caller would meet. It is left in the
+CSV with this note rather than quietly dropped.
 
 PGO removes the indirect call itself. The call *frame* around it is a separate
 matter and is already gone: `RuntimeHasher.Hash` is written as a single

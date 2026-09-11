@@ -1,8 +1,8 @@
 Set3 vs. map[T]struct{} — rtcompare suite
-generated: 2026-09-11T20:33:56+02:00
-elapsed:   1h22m19s
+generated: 2026-09-11T22:05:26+02:00
+elapsed:   1h21m39s
 go:        go1.27.1 linux/amd64, 24 CPUs
-config:    sizes=[1000 16384 262144 2097152] curveSizes=[16384 2097152] keys=[uint64 string struct3x64] scenarios=[] budget=30s hardcap=5m0s resamples=5000 level=0.95 memRepeats=7 tag="base"
+config:    sizes=[1000 16384 262144 2097152] curveSizes=[16384 2097152] keys=[uint64 string struct3x64] scenarios=[] budget=30s hardcap=5m0s resamples=5000 level=0.95 memRepeats=7 tag="pgo"
 rows:      111 runtime, 48 memory, 42 load-curve
 
 Reading a runtime row
@@ -38,3 +38,13 @@ Memory shapes
   grown         created empty, then filled — includes whatever capacity growth landed on
   half-removed  presized and filled, then every second element removed
   window-steady a sliding window that has churned through four times its own size
+
+This run was built with -pgo=profile.pprof, which is stored beside this file.
+The profile was collected in a separate reduced run so that the sampling could
+not perturb the baseline; its numbers were discarded. The baseline this is
+compared against is ../setcompare, taken on the same machine on the same night
+with the identical schedule.
+
+iterate's rows are not comparable between the two. Under this profile the
+suite's own batch closure escapes to the heap, moving its accumulator with it;
+an ordinary consumer loop does not. See the PGO section of the README.
