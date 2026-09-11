@@ -7,12 +7,15 @@
 [![OpenSSF Best Practices](https://www.bestpractices.dev/projects/9470/badge)](https://www.bestpractices.dev/projects/9470)
 [![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/TomTonic/Set3/badge)](https://scorecard.dev/viewer/?uri=github.com/TomTonic/Set3)
 
-Set3 is a high-performance, native Golang set implementation. Against `map[type]struct{}`, the standard foundation for most
-Go set implementations, it holds about a third of the bytes and is faster on most workloads — dramatically so on iteration, set
-algebra and bulk building. The [Performance](#performance) section has the measurements, one workload at a time, each with the
-confidence interval and the machine's own noise floor next to it. Set3 additionally lets you trade space against speed through
-`RehashToCapacity(newCapacity)`, which an implementation built on `map[type]struct{}` cannot offer at all — and which the suite
-uses to compare the two at the *same* occupancy as well as as-shipped.
+Set3 is a high-performance, native Golang set implementation built on the Abseil "Swiss table" layout rather than on
+`map[type]struct{}`, the standard foundation for most Go set implementations.
+
+Out of the box it holds about a third of the native map's bytes and is decisively faster at building, iterating, set algebra and
+churn — iteration is three to four times faster — while being *slower* at plain membership lookups. That is not an accident of
+implementation: Set3 fills its table to about 83% where the native map stops near 47%, which buys memory and pays in probe
+length. Unlike a map, Set3 lets you move that operating point with `RehashToCapacity(newCapacity)`, and at roughly half the
+map's memory it is both smaller and faster than the map on every axis measured. The [Performance](#performance) section shows
+the whole curve, one workload at a time, each number with its confidence interval and the machine's own noise floor beside it.
 
 The code is derived from [SwissMap](https://github.com/dolthub/swiss) and it implements the "Fast, Efficient, Cache-friendly Hash Table" found in [Abseil](https://abseil.io/blog/20180927-swisstables).
 For details on the algorithm see the [CppCon 2017 talk by Matt Kulukundis](https://www.youtube.com/watch?v=ncHmEUmJZf4).
@@ -106,7 +109,8 @@ the visited set of a graph traversal, an inverted-index intersection, a flush
 that walks every element. The other four isolate one cost each, because a
 realistic workload that mixes four costs cannot tell you which of them moved,
 and two repeat the membership workloads with Set3 rehashed to the native map's
-occupancy — see [Memory](#memory) for why that is a separate question.
+occupancy, so that the space/time trade is held fixed and the layouts are
+compared on their own.
 
 Every number comes with the evidence for it. The suite runs the full
 [rtcompare](https://github.com/TomTonic/rtcompare/blob/main/HOWTO.md) protocol:
@@ -123,7 +127,7 @@ go test -tags set3lab -run TestCompareSuite -v -count=1 -timeout 180m ./lab/setc
 go run  -tags set3lab ./lab/cmd/setchart -in lab/results/setcompare
 ```
 
-The measurement takes upwards of an hour; drawing takes an instant. It writes
+The measurement takes about ninety minutes; drawing takes an instant. It writes
 `lab/results/setcompare/` as CSV, with a `run.txt` naming the machine and the
 configuration, and the chart tool turns those into the SVGs below. See
 [lab/README.md](lab/README.md) for the knobs.
@@ -135,22 +139,95 @@ code. A run whose warnings mention a false-signal rate well above 10% was taken
 on a machine that was not holding still, and its magnitudes should not be
 quoted.
 
-### How much faster
+### Set3 is a curve; a map is a point
 
-> **Being re-measured.** The figures that stood here came from a run whose
-> batch lengths were too short, which made the answers depend on how long the
-> harness looked rather than on the code — see `targetBatchDuration` and
-> `collectOptionsFor` in [`lab/setcompare/runtime.go`](lab/setcompare/runtime.go)
-> for what went wrong and
-> `TestQuantizationTargetDoesNotChangeTheAnswer` for the guard that now stands
-> over it. The suite is being re-run at the corrected settings, and at two
-> operating points rather than one: as shipped, and with Set3 rehashed to the
-> native map's occupancy, so that the space/time trade is held fixed and the
-> layouts are compared on their own. The charts and the table return here when
-> that run lands.
->
-> The memory results below are unaffected: they come from a separate,
-> deterministic pass that has reproduced to the digit across every run.
+This is the measurement that frames all the others. Both axes are costs, so
+down and left is better, and the shaded region is everything cheaper than the
+native map *on both axes at once*. Each Set3 point is labelled with the
+occupancy that produced it.
+
+![Set3's space/time curve, uint64 keys](lab/results/setcompare/loadcurve-uint64.svg)
+
+Read at 16 384 `uint64` elements, 30% hit rate:
+
+| operating point | bytes/element | ns/lookup | vs. the map |
+| --- | --- | --- | --- |
+| `map[uint64]struct{}` | 36.1 | 10.56 | — |
+| Set3 at 0.76 load — **as shipped** | 11.8 | 11.74 | −10.2% |
+| Set3 at 0.61 load | 14.7 | 8.41 | **+20.4%** |
+| Set3 at 0.47 load | 19.0 | 7.30 | **+30.7%** |
+| Set3 at 0.37 load | 24.0 | 6.98 | **+33.7%** |
+| Set3 at 0.24 load | 37.5 | 6.92 | +34.5% |
+
+Three things follow, and none of them is visible in a single-number comparison.
+
+**Set3's default sits past the knee of its own curve.** Filling to 83% is what
+makes it a third of the map's size, and it costs 10% on lookups against the
+map. One rehash to about 60% occupancy — still 41% of the map's memory — turns
+that into a 20% win.
+
+**The curve saturates around 0.40.** Going from 24 to 37.5 bytes per element
+buys 0.05 ns. There is no reason to spend past the knee.
+
+**Past the knee it can reverse.** At two million elements the curve is
+U-shaped: it peaks at +37.0% around 0.39 occupancy and falls back to +28.1% at
+0.24, because by then the table no longer fits where it did. The optimum
+occupancy is a function of your working set, which is exactly why the knob
+exists and why the chart is a curve rather than a recommendation.
+
+So the actionable advice is short: **if your workload is lookup-heavy, give
+Set3 about twice the capacity you need.** If it is memory-constrained, leave it
+alone and take the 3× saving.
+
+### Workload by workload
+
+Positive means Set3 is faster. The whisker is the 95% confidence interval, the
+pale band is the noise floor, and a grey bar established nothing. Set3 is at
+its default occupancy here except in the `-eqload` rows, which repeat the
+membership workloads with it rehashed to the map's.
+
+![Set3 vs map[uint64]struct{}](lab/results/setcompare/speedup-uint64.svg)
+
+Where Set3 wins it usually wins by a lot, and for reasons that have nothing to
+do with the load factor:
+
+| Workload | `uint64` | `string` | `struct3x64` |
+| --- | --- | --- | --- |
+| `iterate` | +68 … +77% | +61 … +71% | +65 … +72% |
+| `build-presized` | +38 … +69% | +25 … +61% | +47 … +71% |
+| `intersect` | +38 … +65% | +10 … +40% | — |
+| `sliding-window` | +33 … +48% | +22 … +36% | — |
+| `graph-visited` | +26 … +40% | — | — |
+| `dedup-stream` | +21 … +36% | −9 … 0% | +19 … +44% |
+| `lookup-hit30` | −22 … +2% | −39 … −14% | −34 … +22% |
+| `lookup-hit30-eqload` | **+20 … +34%** | −13 … +8% | −9 … +16% |
+
+Iteration is the largest and most durable difference: Set3 scans its groups
+linearly, the native map walks buckets from a randomised start, and at two
+million elements that is 2.31 ns against 9.87 ns per element. Building a
+presized set of two million is 17.68 ns against 56.72 ns per element — most of
+which is not hashing but touching a third as much memory.
+
+The lookup rows are the load factor, and the `-eqload` rows are the same
+workload with it held fixed: `uint64` goes from −22 … +2% to +20 … +34%.
+
+![Set3 vs map[string]struct{}](lab/results/setcompare/speedup-string.svg)
+
+String keys are Set3's weakest case even at matched occupancy. About half the
+cost of a small-set string lookup is the hash itself (3.9 ns of 7.6), and
+`BenchmarkStringHashRoutes` in the suite puts Set3's routine at 3.93 ns against
+the runtime's 3.55 ns for a 20-byte key. That gap is small; what is left is a
+serial dependency chain of widening multiplies that the routine could break and
+currently does not.
+
+![Set3 vs map[struct]struct{}](lab/results/setcompare/speedup-struct3x64.svg)
+
+### What it costs
+
+The percentages say who won. These say what it cost, which is what decides
+whether a percentage is worth anything. Both axes are logarithmic.
+
+![Cost per operation, uint64 keys](lab/results/setcompare/cost-uint64.svg)
 
 ### Memory
 
@@ -158,8 +235,9 @@ Set3 holds between 31% and 64% of the native map's bytes, depending on the key
 type and on how the container was filled. This is measured as heap still live
 after a full collection with the container reachable — not as anything either
 container reports about itself — and the measurement is calibrated against a
-`[]uint64` of known size on every run. (The chart returns with the rest of them;
-the table is the substance.)
+`[]uint64` of known size on every run.
+
+![Retained memory per element, uint64 keys](lab/results/setcompare/memory-uint64.svg)
 
 | Fill history | `Set3[uint64]` | `map[uint64]struct{}` | ratio |
 | --- | --- | --- | --- |
@@ -185,11 +263,18 @@ the Go runtime rather than of anyone's benchmark:
 
 Nine bytes per slot at 83% against seventeen at 47% is the whole of it. Note
 what that is *not*: it is not waste. A lower load factor buys shorter probe
-sequences, and the native map spends memory on exactly that — which is why the
-suite also measures Set3 rehashed to the map's occupancy. At equal load factor
-Set3 still holds about 53% of the bytes, because the padded slot is a separate
-effect from the occupancy; what changes is the probe length, and that is the
-part a speed comparison at unequal occupancy silently folds in.
+sequences, and the native map spends memory on exactly that — which is what
+[the curve above](#set3-is-a-curve-a-map-is-a-point) is measuring. The two
+mechanisms are separable: the padded slot is worth a factor of about 1.9
+whatever the occupancy, so even at an identical load factor Set3 holds roughly
+53% of the bytes. Only the rest is the tuning.
+
+One number here is a finding rather than a footnote. The sliding window's 0.46
+ratio against `presized`'s 0.31 is Set3's table growing under churn: tombstones
+are reused on insert, but not always in time, and the suite's allocation audit
+caught three cells where a steady-state workload was allocating — up to 245 KB
+per operation at two million string keys. That is a rehash in a workload that
+should not need one.
 
 Note also that these figures moved with Go itself. On the bucket map that this
 README's original 25% figure was taken on, `map[uint64]struct{}` cost about 12
