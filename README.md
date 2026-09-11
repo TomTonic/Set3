@@ -299,12 +299,35 @@ mechanisms are separable: the padded slot is worth a factor of about 1.9
 whatever the occupancy, so even at an identical load factor Set3 holds roughly
 53% of the bytes. Only the rest is the tuning.
 
-One number here is a finding rather than a footnote. The sliding window's 0.46
-ratio against `presized`'s 0.31 is Set3's table growing under churn: tombstones
-are reused on insert, but not always in time, and the suite's allocation audit
-caught three cells where a steady-state workload was allocating — up to 245 KB
-per operation at two million string keys. That is a rehash in a workload that
-should not need one.
+One number here was a finding rather than a footnote, and it has since been
+fixed. The sliding window's 0.46 ratio against `presized`'s 0.31 was Set3's
+table growing under churn.
+
+The cause was the growth trigger. `resident` counts every slot that is not
+empty, tombstones included, and the insert path grew the table whenever
+`resident` reached the limit. A workload that removes as often as it inserts
+keeps the element count constant and still drives `resident` upwards, because
+`Remove` can clear a slot outright only when its group has an empty slot to
+terminate probes with — in a full table it usually does not, and leaves a
+tombstone instead. So a window whose size never changed kept growing its
+backing store. Measured at 262 144 `uint64` keys over twenty window turns: the
+table grew **2.25×** and settled at 36% occupancy with 43% of its non-empty
+slots tombstones.
+
+`Add` now asks which kind of pressure it is under. If the live element count is
+still at or below three quarters of the limit, the table is full of tombstones
+rather than elements, and one rehash at the *same* size gives every one of those
+slots back. Only a table that is genuinely full of elements grows. The same
+measurement now holds one size throughout, at 54% occupancy, with 11 in-place
+rehashes across 10.5 million window operations — about one per 3.6 window turns,
+and nothing allocated per operation in between.
+
+The three quarters is the knob, and it is a space/time one like every other
+number in this section: a lower threshold grows more readily and settles at a
+lower occupancy, which is faster and larger. At the current setting this
+workload costs about 28% more time per remove-and-insert cycle than the
+uncontrolled growth did, and about 33% less memory. Abseil draws the same line
+at 25/32 for the same reason.
 
 Note also that these figures moved with Go itself. On the bucket map that this
 README's original 25% figure was taken on, `map[uint64]struct{}` cost about 12

@@ -574,6 +574,40 @@ func (thisSet *Set3[T]) ToArray() []T {
 	return result
 }
 
+// makeRoom is called when the table has run out of free slots. It decides
+// whether that means the set has too many elements or merely too many
+// tombstones, and only grows in the first case.
+//
+// The distinction matters because resident counts every slot that is not empty,
+// tombstones included, while Size counts only live elements. A workload that
+// removes as often as it inserts — a sliding window, a cache, a work queue —
+// keeps Size constant and still drives resident upwards: Remove can only clear
+// a slot outright when its group has an empty slot to terminate probes with,
+// and in a full table it usually does not, so it leaves a tombstone instead.
+// Add then reuses a tombstone only if one happens to lie on the probe path of
+// the element being inserted.
+//
+// Growing on that pressure is the wrong answer twice over. It doubles the
+// memory of a set whose element count never changed, and it only postpones the
+// problem: measured before this existed, a window of 262 144 uint64 keys grew
+// its table 2.25x over twenty window turns and settled at 36% occupancy with
+// 43% of its non-empty slots tombstones. Rehashing at the same size costs one
+// pass and gives every one of those slots back.
+//
+// The three-quarters bound is what keeps this from thrashing. After an in-place
+// rehash resident equals Size, so the next trigger is at least a quarter of the
+// limit away; without a margin the set could rehash on nearly every insert.
+// Abseil draws the same line at 25/32 for the same reason.
+func (thisSet *Set3[T]) makeRoom() {
+	if thisSet.Size() <= thisSet.elementLimit/4*3 {
+		// Tombstones, not elements. Rehash at the current size to drop them.
+		thisSet.rehashToNumGroups(uint32(len(thisSet.groupCtrl))) //nolint:gosec
+		return
+	}
+	nextGroupCount := calcNextGroupCount(uint32(len(thisSet.groupCtrl))) //nolint:gosec
+	thisSet.rehashToNumGroups(nextGroupCount)
+}
+
 /*
 Add inserts the element into thisSet if it is not yet in thisSet.
 
@@ -584,8 +618,7 @@ Example:
 */
 func (thisSet *Set3[T]) Add(element T) {
 	if thisSet.resident >= thisSet.elementLimit {
-		nextGroupCount := calcNextGroupCount(uint32(len(thisSet.groupCtrl))) //nolint:gosec
-		thisSet.rehashToNumGroups(nextGroupCount)
+		thisSet.makeRoom()
 	}
 	hash := thisSet.hashFunction.Hash(element)
 	H2 := (hash & 0x0000_0000_0000_007f)

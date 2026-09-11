@@ -485,3 +485,116 @@ func TestFindHashForGroupAndH2RejectsBadInput(t *testing.T) {
 	require.Panics(t, func() { findHashForGroupAndH2(11, 0, 0x80) })
 	require.Panics(t, func() { findHashForGroupAndH2(11, 11, 1) })
 }
+
+// TestSlidingWindowRehashesInPlaceInsteadOfGrowing pins the fix for a set that
+// grew without its element count growing.
+//
+// resident counts every slot that is not empty, tombstones included, and the
+// insert path used to grow the table whenever resident reached the limit. A
+// workload that removes as often as it inserts keeps Size constant and still
+// drives resident upwards, because Remove can clear a slot outright only when
+// its group has an empty slot to terminate probes with — in a full table it
+// usually does not, and leaves a tombstone. The set therefore doubled the
+// memory of a window whose size never changed.
+//
+// Measured before makeRoom existed: a window of 262 144 uint64 keys grew its
+// table 2.25x over twenty window turns and settled at 36% occupancy with 43% of
+// its non-empty slots tombstones. With the fix it stays at the size it was
+// given.
+//
+// The set is deliberately given headroom, so that every rehash this workload
+// triggers is a tombstone rehash and any growth at all is the regression.
+func TestSlidingWindowRehashesInPlaceInsteadOfGrowing(t *testing.T) {
+	const window = 4096
+	set := EmptyWithCapacity[uint64](window * 2)
+
+	for i := range uint64(window) {
+		set.Add(i)
+	}
+	groupsAtStart := len(set.groupCtrl)
+	seed := set.hashFunction.Seed
+	rehashes := 0
+
+	for i := uint64(window); i < window*40; i++ {
+		set.Remove(i - window)
+		set.Add(i)
+
+		require.Equal(t, window, int(set.Size()), "the window changed size, so this is no longer the workload under test")
+		require.Equal(t, groupsAtStart, len(set.groupCtrl),
+			"the table grew from %d to %d groups while holding a constant %d elements; "+
+				"tombstone pressure is being answered by growing instead of by rehashing in place",
+			groupsAtStart, len(set.groupCtrl), window)
+
+		if set.hashFunction.Seed != seed {
+			rehashes++
+			seed = set.hashFunction.Seed
+		}
+	}
+
+	// Without at least one rehash the assertion above would hold vacuously:
+	// the workload has to actually produce the tombstone pressure it claims to.
+	require.Positive(t, rehashes, "no rehash was triggered, so the in-place path was never exercised")
+	t.Logf("%d in-place rehashes over %d window turns, %d groups throughout, %d tombstones left",
+		rehashes, 39, groupsAtStart, set.dead)
+}
+
+// TestMakeRoomGrowsOnlyWhenTheElementsNeedIt checks the decision itself, at both
+// sides of the boundary it draws.
+//
+// Growing when the table is full of live elements is right; growing when it is
+// full of tombstones is the bug. Both states are built directly and makeRoom is
+// called on them, rather than waiting for a workload to produce them — so the
+// test says what the rule is, not merely that some workload comes out well.
+func TestMakeRoomGrowsOnlyWhenTheElementsNeedIt(t *testing.T) {
+	// fillToLimit adds consecutive elements until the table has no free slots
+	// left, which is the state that calls makeRoom.
+	fillToLimit := func(set *Set3[uint64]) uint64 {
+		var i uint64
+		for set.resident < set.elementLimit {
+			set.Add(i)
+			i++
+		}
+		return i
+	}
+
+	t.Run("tombstones rehash in place", func(t *testing.T) {
+		set := EmptyWithCapacity[uint64](1000)
+		added := fillToLimit(set)
+
+		// Remove three quarters of the elements. Every removal whose group has
+		// no empty slot leaves a tombstone behind.
+		for i := range added / 4 * 3 {
+			set.Remove(i)
+		}
+		require.Positive(t, set.dead, "the removals left no tombstones, so this case is not being tested")
+		require.LessOrEqual(t, set.Size(), set.elementLimit/4*3,
+			"the set is not below the threshold makeRoom decides on, so this case is not being tested")
+
+		groups := len(set.groupCtrl)
+		survivors := set.ToArray()
+		set.makeRoom()
+
+		require.Equal(t, groups, len(set.groupCtrl),
+			"the table grew although three quarters of its slots were tombstones")
+		require.Zero(t, set.dead, "the in-place rehash did not drop the tombstones")
+		require.Equal(t, set.Size(), set.resident, "every remaining slot should now hold a live element")
+		require.Len(t, survivors, int(set.Size()), "the rehash changed the element count")
+		for _, e := range survivors {
+			require.True(t, set.Contains(e), "element %d was lost by the in-place rehash", e)
+		}
+	})
+
+	t.Run("live elements grow the table", func(t *testing.T) {
+		set := EmptyWithCapacity[uint64](1000)
+		fillToLimit(set)
+		require.Zero(t, set.dead, "no element was removed, so there should be no tombstones")
+
+		groups := len(set.groupCtrl)
+		size := set.Size()
+		set.makeRoom()
+
+		require.Greater(t, len(set.groupCtrl), groups,
+			"the table was full of live elements and did not grow")
+		require.Equal(t, size, set.Size(), "growing changed the element count")
+	})
+}
