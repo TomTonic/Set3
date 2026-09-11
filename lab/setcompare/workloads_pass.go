@@ -270,23 +270,38 @@ func buildIterateWorkload[T comparable](w *Workload, mk keyMaker[T], fold folder
 	// costs, and auditAllocationFlag for what catches the mistake.
 	w.Allocating = false
 
+	// The accumulator lives in a one-element slice rather than in a local, on
+	// both sides, and that is not a style choice.
+	//
+	// A local captured by the range-over-func closure is normally kept in a
+	// register: the compiler proves the closure does not escape because
+	// range-over-func consumes it immediately. Under a profile that made the
+	// batch an indirect call, it stopped proving that — the closure escaped,
+	// the local moved to the heap with it, and every accumulation became a
+	// heap write. The map side ranges the language construct and has no
+	// closure, so it was unaffected, and the measured difference moved by up to
+	// 24 percentage points for a reason that lived entirely in this file.
+	//
+	// A slice element is already heap memory in every build, so both sides do
+	// the same store to the same cache line whatever the compiler decides. It
+	// costs one L1 write per element on each side and it does not move.
+	accSet := make([]uint64, 1)
+	accMap := make([]uint64, 1)
 	w.Set3Batch = func(n uint64) {
-		var acc uint64
 		for range n {
 			for e := range s.MutableRange() {
-				acc ^= fold(e)
+				accSet[0] ^= fold(e)
 			}
 		}
-		sink += acc
+		sink += accSet[0]
 	}
 	w.MapBatch = func(n uint64) {
-		var acc uint64
 		for range n {
 			for e := range m {
-				acc ^= fold(e)
+				accMap[0] ^= fold(e)
 			}
 		}
-		sink += acc
+		sink += accMap[0]
 	}
 	w.Verify = func() error {
 		var fromSet, fromMap uint64

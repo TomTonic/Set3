@@ -144,6 +144,89 @@ func buildLookupWorkload[T comparable](w *Workload, mk keyMaker[T], size int, hi
 	return w
 }
 
+// buildChurnFreshWorkload is a fixed-size window over keys the container has
+// never seen before.
+//
+// It exists because buildSlidingWindowWorkload cannot answer the question it
+// looks like it answers. That one cycles a ring of 2n keys, so a key arriving
+// at the table is one that left it n steps ago and hashes to the home group it
+// already had; the set of home groups in play never changes, and tombstones are
+// reused almost perfectly. Measured at 262 144 uint64 keys over twenty window
+// turns, a cyclic window holds 16.62 bytes per element whether or not the
+// insert path reuses tombstones deliberately — the workload cannot tell the two
+// apart.
+//
+// A deduplicator over a live stream, a cache, or a work queue never sees the
+// same key twice. Every insert probes from a fresh home group and reuses a
+// tombstone only by luck. That is the case where the growth policy decides
+// whether the table holds its size or drifts: the same measurement on fresh
+// keys gave 24.94 bytes per element at 36% occupancy before the policy existed
+// and 16.62 at 54% after.
+//
+// Keys come from the id counter directly rather than from a pre-built ring, so
+// the supply is unbounded and costs no memory. That restricts the scenario to
+// key types whose maker does not allocate — a string maker would put one
+// allocation per operation inside the measured region, on both sides equally
+// but large enough to bury what is being measured.
+func buildChurnFreshWorkload[T comparable](w *Workload, mk keyMaker[T], size int) *Workload {
+	window := uint64(size) //nolint:gosec
+
+	s := set3.EmptyWithCapacity[T](uint32(size)) //nolint:gosec
+	m := make(map[T]struct{}, size)
+	for i := range window {
+		k := mk(memberDomain + i)
+		s.Add(k)
+		m[k] = struct{}{}
+	}
+
+	w.ItemsPerOp = 1
+	// The table allocates once while it settles from the presized capacity into
+	// its steady state, and again on each rehash that drops tombstones. Both are
+	// rare and amortised, but they are real allocations inside the measured
+	// region, which is exactly what this flag is for.
+	w.Allocating = true
+
+	curSet, curMap := window, window
+	w.Set3Batch = func(n uint64) {
+		c := curSet
+		for range n {
+			s.Remove(mk(memberDomain + c - window))
+			s.Add(mk(memberDomain + c))
+			c++
+		}
+		curSet = c
+		sink += uint64(s.Size())
+	}
+	w.MapBatch = func(n uint64) {
+		c := curMap
+		for range n {
+			delete(m, mk(memberDomain+c-window))
+			m[mk(memberDomain+c)] = struct{}{}
+			c++
+		}
+		curMap = c
+		sink += uint64(len(m))
+	}
+	w.Verify = func() error {
+		const steps = 1_000
+		w.Set3Batch(steps)
+		w.MapBatch(steps)
+		if curSet != curMap {
+			return fmt.Errorf("churn-fresh: cursors diverged, %d against %d", curSet, curMap)
+		}
+		if int(s.Size()) != size || len(m) != size {
+			return fmt.Errorf("churn-fresh: window drifted off its size, Set3 holds %d and the map holds %d, expected %d",
+				s.Size(), len(m), size)
+		}
+		return sameContents(s, m)
+	}
+	w.Release = func() {
+		s = nil
+		m = nil
+	}
+	return w
+}
+
 // buildSlidingWindowWorkload measures a fixed-size window over an endless key
 // stream: every operation removes the oldest key and inserts a new one, so the
 // container holds exactly size elements forever.

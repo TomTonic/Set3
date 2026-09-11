@@ -157,6 +157,7 @@ const (
 	scLookupHit30Eq = "lookup-hit30-eqload"
 	scLookupHit95Eq = "lookup-hit95-eqload"
 	scSlidingWindow = "sliding-window"
+	scChurnFresh    = "churn-fresh"
 	scMixedIndex    = "mixed-index"
 	scGraphVisited  = "graph-visited"
 	scIntersect     = "intersect"
@@ -221,6 +222,14 @@ var Workloads = []scenarioInfo{
 		doc:      "A fixed-size dedup window: remove the oldest key, insert the newest, forever. The workload that fills a Swiss table with tombstones.",
 		unit:     "ns/(remove+insert)",
 		keyTypes: scalarKeyTypes,
+	},
+	{
+		name: scChurnFresh,
+		doc: "The same fixed-size window over keys the container has never seen — a deduplicator over a live stream, a cache, a work queue. " +
+			"sliding-window cycles a bounded ring, so a key returning to the table finds the home group it had before; here every insert probes from a fresh one, " +
+			"which is the case that decides whether tombstones are reused or merely accumulate.",
+		unit:     "ns/(remove+insert)",
+		keyTypes: []string{keyTypeUint64, keyTypeStruct},
 	},
 	{
 		name:     scMixedIndex,
@@ -334,6 +343,8 @@ func buildWorkload[T comparable](scenario, keyType string, size int, mk keyMaker
 		return buildLookupWorkload(base, mk, size, 0.95, true), nil
 	case scSlidingWindow:
 		return buildSlidingWindowWorkload(base, mk, size), nil
+	case scChurnFresh:
+		return buildChurnFreshWorkload(base, mk, size), nil
 	case scMixedIndex:
 		return buildMixedIndexWorkload(base, mk, size), nil
 	case scGraphVisited:
