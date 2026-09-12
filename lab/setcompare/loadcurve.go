@@ -45,13 +45,42 @@ import (
 // where it occupies as many bytes as the native map does, so the curve covers
 // the whole range a caller could reasonably ask for.
 
+// set3MaxReachableLoad is the highest occupancy a Set3 will hold.
+//
+// Above it the insert path grows the table on its own, so a higher target
+// cannot be measured — only asked for and then silently missed, which is what
+// used to happen: with the default at 4.8 elements per group, a request for
+// 0.80 produced 0.51 because the fill overran the element limit and the table
+// grew underneath the measurement.
+const set3MaxReachableLoad = set3MaxAvgGroupLoad / set3groupSizeInLab
+
+// set3groupSizeInLab is Set3's group size, eight slots. Also unexported over
+// there; unlike the load factor this one has never moved, and the same test
+// that checks the load constant would notice if it did.
+const set3groupSizeInLab = 8.0
+
 // loadCurveTargets are the occupancies Set3 is measured at.
 //
-// 0.80 is what EmptyWithCapacity(n) filled with n elements produces, which is
-// Set3 as shipped. 0.25 is where a uint64 Set3 costs the same 36 bytes per
-// element as the native map, so the last point is a like-for-like memory
-// comparison. The rest fill in the curve between them.
-var loadCurveTargets = []float64{0.80, 0.65, 0.50, 0.40, 0.30, 0.25}
+// The top of the curve is Set3 as shipped: EmptyWithCapacity(n) filled with n
+// elements sits at set3MaxReachableLoad, and nothing above that exists to
+// measure. The bottom is chosen so that the last point costs roughly what the
+// native map costs per element, which makes it a like-for-like memory
+// comparison; the map's own occupancy of about 0.41 to 0.47 falls inside the
+// range, which is what the -eqload scenarios need.
+//
+// They are written as fractions of the reachable maximum rather than as
+// absolute numbers, so that retuning the default moves the whole curve with it
+// instead of pushing its top end off the end of what the library permits.
+var loadCurveTargets = curveTargets()
+
+func curveTargets() []float64 {
+	fractions := []float64{1.00, 0.85, 0.70, 0.58, 0.48, 0.40}
+	out := make([]float64, len(fractions))
+	for i, f := range fractions {
+		out[i] = set3MaxReachableLoad * f
+	}
+	return out
+}
 
 // LoadCurvePoint is one measured operating point.
 //
