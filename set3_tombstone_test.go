@@ -551,16 +551,15 @@ func TestChurnDoesNotGrowTheTableWithoutBound(t *testing.T) {
 		settled, turns-1, set.dead, set.Size())
 }
 
-// TestMakeRoomGrowsOnlyWhenTheElementsNeedIt checks the decision itself, at both
-// sides of the boundary it draws.
+// TestGrowthAndCompactionSplitTheirJobs checks the two decisions separately,
+// at both sides of the line each one draws.
 //
 // Growing when the table is full of live elements is right; growing when it is
-// full of tombstones is the bug. Both states are built directly and makeRoom is
-// called on them, rather than waiting for a workload to produce them — so the
-// test says what the rule is, not merely that some workload comes out well.
-func TestMakeRoomGrowsOnlyWhenTheElementsNeedIt(t *testing.T) {
-	// fillToLimit adds consecutive elements until the table has no free slots
-	// left, which is the state that calls makeRoom.
+// full of tombstones is the bug that was fixed. Since the tombstone decision
+// moved to the removal path, the two are now independent and are tested that
+// way: states are built directly and the operation is called on them, rather
+// than waiting for a workload to produce them.
+func TestGrowthAndCompactionSplitTheirJobs(t *testing.T) {
 	fillToLimit := func(set *Set3[uint64]) uint64 {
 		var i uint64
 		for set.resident < set.elementLimit {
@@ -570,44 +569,55 @@ func TestMakeRoomGrowsOnlyWhenTheElementsNeedIt(t *testing.T) {
 		return i
 	}
 
-	t.Run("tombstones rehash in place", func(t *testing.T) {
-		set := EmptyWithCapacity[uint64](1000)
-		added := fillToLimit(set)
-
-		// Remove three quarters of the elements. Every removal whose group has
-		// no empty slot leaves a tombstone behind.
-		for i := range added / 4 * 3 {
-			set.Remove(i)
-		}
-		require.Positive(t, set.dead, "the removals left no tombstones, so this case is not being tested")
-		require.LessOrEqual(t, uint64(set.Size())*growthDenominator, uint64(set.elementLimit)*growthNumerator,
-			"the set is not below the threshold makeRoom decides on, so this case is not being tested")
-
-		groups := len(set.groupCtrl)
-		survivors := set.ToArray()
-		set.makeRoom()
-
-		require.Equal(t, groups, len(set.groupCtrl),
-			"the table grew although three quarters of its slots were tombstones")
-		require.Zero(t, set.dead, "the in-place rehash did not drop the tombstones")
-		require.Equal(t, set.Size(), set.resident, "every remaining slot should now hold a live element")
-		require.Len(t, survivors, int(set.Size()), "the rehash changed the element count")
-		for _, e := range survivors {
-			require.True(t, set.Contains(e), "element %d was lost by the in-place rehash", e)
-		}
-	})
-
-	t.Run("live elements grow the table", func(t *testing.T) {
+	t.Run("a table full of live elements grows", func(t *testing.T) {
 		set := EmptyWithCapacity[uint64](1000)
 		fillToLimit(set)
 		require.Zero(t, set.dead, "no element was removed, so there should be no tombstones")
 
 		groups := len(set.groupCtrl)
 		size := set.Size()
-		set.makeRoom()
+		set.grow()
 
-		require.Greater(t, len(set.groupCtrl), groups,
-			"the table was full of live elements and did not grow")
+		require.Greater(t, len(set.groupCtrl), groups, "the table was full of live elements and did not grow")
 		require.Equal(t, size, set.Size(), "growing changed the element count")
+	})
+
+	t.Run("removal reclaims tombstones instead of letting them pile up", func(t *testing.T) {
+		set := EmptyWithCapacity[uint64](1000)
+		added := fillToLimit(set)
+
+		groups := len(set.groupCtrl)
+		// Remove most of it. Removals whose group has no empty slot leave
+		// tombstones, and the removal path reclaims them once they pass the
+		// threshold — without growing and without allocating a new table.
+		for i := range added / 4 * 3 {
+			set.Remove(i)
+		}
+
+		require.Equal(t, groups, len(set.groupCtrl), "reclaiming tombstones must not change the table's size")
+		require.Less(t, uint64(set.dead)*growthDenominator, uint64(set.elementLimit)*(growthDenominator-growthNumerator),
+			"tombstones were left above the threshold the removal path is supposed to hold them under")
+		for i := added / 4 * 3; i < added; i++ {
+			require.True(t, set.Contains(i), "element %d was lost while tombstones were reclaimed", i)
+		}
+	})
+
+	t.Run("the threshold is what makes unconditional growth correct", func(t *testing.T) {
+		// Add grows without asking whether the pressure is tombstones, which is
+		// only sound while tombstones stay under a quarter of the limit. This
+		// is that invariant, checked after every single operation of a churn
+		// that produces tombstones continuously.
+		const window = 2048
+		key := func(i uint64) uint64 { return i * 0x9e3779b97f4a7c15 }
+		set := EmptyWithCapacity[uint64](window)
+		for i := range uint64(window) {
+			set.Add(key(i))
+		}
+		for i := uint64(window); i < 20*window; i++ {
+			set.Remove(key(i - window))
+			set.Add(key(i))
+			require.Less(t, uint64(set.dead)*growthDenominator, uint64(set.elementLimit)*(growthDenominator-growthNumerator),
+				"tombstones rose above a quarter of the limit at step %d, which makes Add's unconditional growth a guess", i)
+		}
 	})
 }

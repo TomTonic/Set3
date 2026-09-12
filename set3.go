@@ -60,29 +60,38 @@ import (
 // default it starts from.
 //
 // growthNumerator/growthDenominator is what keeps a set that removes as often
-// as it inserts from quietly leaving that operating point. The insert path
-// grows the table when resident reaches elementLimit, and resident counts every
-// slot that is not empty — tombstones included. Remove can clear a slot outright
-// only when its group still has an empty slot to terminate probes with, and in a
-// full table it usually does not; it leaves a tombstone instead. Add reuses a
-// tombstone only when one happens to lie on the probe path of the element being
-// inserted. So a sliding window whose element count never changes still pushes
-// resident up, and a table that grew on that pressure has spent memory on
-// nothing.
+// as it inserts from quietly leaving that operating point.
 //
-// Measured before this rule existed: a window of 262 144 uint64 keys grew its
-// table 2.25x over twenty window turns and settled at 36% occupancy with 43% of
-// its non-empty slots tombstones. With it, the same workload holds one size at
-// 54% occupancy.
+// resident counts every slot that is not empty, tombstones included. Remove can
+// clear a slot outright only when its group still has an empty slot to
+// terminate probes with, and in a full table it usually does not; it leaves a
+// tombstone instead. Add reuses a tombstone only when one happens to lie on the
+// probe path of the element being inserted. So a window whose element count
+// never changes still pushes resident up, and a table that grew on that
+// pressure has spent memory on nothing.
 //
-// The fraction is a space/time knob like the load factor above, and it points
-// the other way: a smaller one grows more readily and settles lower, which is
-// faster and larger. Three quarters leaves at least a quarter of the limit free
-// after an in-place rehash, which is what stops a set rehashing on nearly every
-// insert. Abseil draws the same line at 25/32.
+// Whether it drifts depends on where the keys come from, and the difference is
+// stark. Measured at 262 144 uint64 keys over twenty window turns, before any
+// of this existed: a window cycling a bounded ring of 2n keys held 16.62 bytes
+// per element, because a returning key finds the home group it had before and
+// lands on its own tombstone. A window over keys the set had never seen grew
+// its table 2.25x and settled at 36% occupancy with 43% of its non-empty slots
+// tombstones.
+//
+// The rule is one quarter, read from two ends. Remove reclaims the tombstones
+// whenever they reach a quarter of the limit — see removeLeftTooManyTombstones,
+// which is on the removal path because that is where tombstones are made, and
+// only in the branch that actually makes one. That bound is also what lets Add
+// grow without asking any questions: if tombstones can never exceed a quarter
+// of the limit, then resident reaching the limit means live elements are past
+// three quarters of it, and growing is the right answer rather than a guess.
+//
+// Reclaiming is compactInPlace, which rearranges the table it already has
+// instead of allocating a replacement. Abseil draws the same line at 25/32 and
+// reclaims the same way.
 const (
 	set3groupSize       = 8
-	set3maxAvgGroupLoad = 6.5
+	set3maxAvgGroupLoad = 4.8
 
 	growthNumerator   = 3
 	growthDenominator = 4
@@ -290,7 +299,24 @@ func FromArray[T comparable](data []T) *Set3[T] {
 	if data == nil {
 		return Empty[T]()
 	}
-	result := EmptyWithCapacity[T](uint32(len(data) * 7 / 5)) //nolint:gosec
+	// Half again as much room as the data needs.
+	//
+	// FromArray is a convenience for starting a set from something you already
+	// have and then working with it, and working with a set means inserting
+	// into it — removal is the rarer call in practice. So this deliberately does
+	// not match EmptyWithCapacity's contract, which is "this is the size I mean"
+	// and leaves the table at the default occupancy. Here the caller has said
+	// nothing about a size, so the sensible default is room to grow by half
+	// before anything has to be rehashed.
+	//
+	// Computed in uint64 and clamped, because len(data)*3/2 on a very large
+	// slice would otherwise wrap the uint32 the constructor takes and ask for a
+	// tiny table.
+	capacity := uint64(len(data)) * 3 / 2 //nolint:gosec
+	if capacity > math.MaxUint32 {
+		capacity = math.MaxUint32
+	}
+	result := EmptyWithCapacity[T](uint32(capacity)) //nolint:gosec
 	for _, e := range data {
 		result.Add(e)
 	}
@@ -608,28 +634,21 @@ func (thisSet *Set3[T]) ToArray() []T {
 	return result
 }
 
-// makeRoom is called when the table has run out of free slots. It decides
-// whether that means the set holds too many elements or merely too many
-// tombstones, and only grows in the first case — see the growth-policy note on
-// the constants at the top of this file for why the distinction exists and what
-// the fraction costs.
+// grow moves the table to the next size up.
 //
-// It is deliberately not part of Add. Add carries the probe loop and is far past
-// the inliner's budget either way, but keeping the rehash decision out of its
-// body still measurably shrinks it: 454 against 522 with the decision inlined.
-// Nothing here runs on the insert path — reaching this function already means an
-// O(n) rehash is about to happen.
-func (thisSet *Set3[T]) makeRoom() {
-	groupCount := uint32(len(thisSet.groupCtrl)) //nolint:gosec
-	// Size() <= elementLimit * 3/4, cross-multiplied so that the rehash path
-	// carries no division, and widened so that a table with more than 2^30
-	// slots cannot overflow the comparison.
-	if uint64(thisSet.Size())*growthDenominator <= uint64(thisSet.elementLimit)*growthNumerator {
-		// Tombstones, not elements. Rehashing at the current size drops them.
-		thisSet.rehashToNumGroups(groupCount)
-		return
-	}
-	thisSet.rehashToNumGroups(calcNextGroupCount(groupCount))
+// It is the only thing the insert path has to decide, and it can be
+// unconditional because Remove holds the number of tombstones below a quarter
+// of the limit. resident is live elements plus tombstones, so once tombstones
+// are bounded, resident reaching the limit means the elements really are there
+// and the table really is out of room. See the note on the constants at the top
+// of this file, and removeLeftTooManyTombstones.
+//
+// It is not part of Add's body. Add carries the probe loop and is far past the
+// inliner's budget either way, but keeping this out of it still measurably
+// shrinks it: 454 against 522 with the call written inline.
+func (thisSet *Set3[T]) grow() {
+	nextGroupCount := calcNextGroupCount(uint32(len(thisSet.groupCtrl))) //nolint:gosec
+	thisSet.rehashToNumGroups(nextGroupCount)
 }
 
 /*
@@ -642,7 +661,7 @@ Example:
 */
 func (thisSet *Set3[T]) Add(element T) {
 	if thisSet.resident >= thisSet.elementLimit {
-		thisSet.makeRoom()
+		thisSet.grow()
 	}
 	hash := thisSet.hashFunction.Hash(element)
 	H2 := (hash & 0x0000_0000_0000_007f)
@@ -869,6 +888,9 @@ func (thisSet *Set3[T]) Remove(element T) bool {
 					}
 					var k T
 					groupSlot[currentGroupIndex][s] = k
+					if thisSet.removeLeftTooManyTombstones() {
+						thisSet.compactInPlace()
+					}
 					return true
 				}
 			}
@@ -885,6 +907,25 @@ func (thisSet *Set3[T]) Remove(element T) bool {
 			currentGroupIndex = 0
 		}
 	}
+}
+
+// removeLeftTooManyTombstones reports whether the table now holds enough
+// tombstones to be worth reclaiming.
+//
+// The check lives on the removal path rather than the insert path, and only in
+// the branch that actually creates a tombstone. That is where the cost belongs:
+// insertion is the common call, removal is rarer, and a removal that finds an
+// empty slot in its group clears the slot outright and never gets here at all.
+//
+// Keeping tombstones under a quarter of the limit is also what lets Add grow
+// unconditionally. resident counts live elements plus tombstones; if tombstones
+// can never be more than a quarter of the limit, then resident reaching the
+// limit means live elements are more than three quarters of it, and growing is
+// the right answer rather than a guess. The two constants are the same pair the
+// load-factor note at the top of this file describes, read from the other end:
+// three quarters live is one quarter dead.
+func (thisSet *Set3[T]) removeLeftTooManyTombstones() bool {
+	return uint64(thisSet.dead)*growthDenominator >= uint64(thisSet.elementLimit)*(growthDenominator-growthNumerator)
 }
 
 /*
