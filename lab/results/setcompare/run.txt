@@ -1,3 +1,28 @@
+RECONSTRUCTED HEADER — read this first
+========================================================================
+The tables in this directory were produced by two passes, and the manifest
+for the first one was destroyed by a defect in the second. The merge pass
+replaced run.txt instead of appending to it, so the section below describes
+26 re-measured cells while the CSVs hold 119 runtime and 48 memory rows. That
+defect is fixed; this header was written by hand to say what the generated
+file can no longer say, and it is the only hand-written part of this
+directory.
+
+Pass 1 — the full schedule, 2026-09-12 12:41 to 14:11, 1h30m
+  go1.27.1 linux/amd64, 24 CPUs
+  sizes=[1000 16384 262144 2097152] curveSizes=[16384 2097152] keys=[uint64 string struct3x64] scenarios=[] budget=30s hardcap=5m0s resamples=5000 level=0.95 memRepeats=7 tag="load4.8-warmed"
+  Produced all 119 runtime rows, all 48 memory rows and all 42 load-curve
+  rows. Every row in memory.csv and loadcurve.csv comes from this pass.
+
+Pass 2 — re-measurement of the untrustworthy cells, 14:11 to 14:45, 33m
+  Described by the generated section below. It replaced 26 runtime rows with
+  measurements taken at a four times longer budget, chosen because pass 1
+  reported them unresolved, above a 3% noise floor, or with an A/A
+  false-positive rate above 25%. 16 of the 26 became trustworthy; the other
+  10 are still marked in the note column and should not be quoted.
+
+========================================================================
+
 Set3 vs. map[T]struct{} — rtcompare suite
 generated: 2026-09-12T14:45:18+02:00
 elapsed:   33m23s

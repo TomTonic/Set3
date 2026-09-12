@@ -122,21 +122,34 @@ func measureNativeMapSlots[T comparable](keys []T, size int) (slots float64, loa
 	return bytes / perSlot, loadFactor(bytes, perSlot, size)
 }
 
+// set3MaxAvgGroupLoad mirrors the library's own set3maxAvgGroupLoad, which is
+// unexported.
+//
+// A copy of a constant in another package is a liability, and this one has
+// already cost a measurement: it read 6.67 while the library had moved first to
+// 6.5 and then to 4.8, so every load-curve point was computed from the wrong
+// inverse and the pass asked for occupancies between 0.80 and 0.25 while
+// actually producing 0.58 down to 0.18. The numbers it recorded were still
+// true — the achieved load is measured, never assumed — but the curve no longer
+// covered the range it was built to cover, and nothing said so.
+//
+// TestLabLoadConstantMatchesTheLibrary fails if the two drift apart again.
+const set3MaxAvgGroupLoad = 4.8
+
 // set3CapacityForSlots converts a wanted slot count into the capacity argument
 // RehashToCapacity takes.
 //
-// Set3 sizes itself in groups of eight slots and admits 6.67 elements per
-// group, so a capacity of c asks for ceil(c/6.67) groups, rounded up to a
-// prime. Inverting that gives the capacity which produces the wanted number of
-// slots; the prime rounding means the result is approximate, which is why the
-// achieved load factor is measured afterwards rather than assumed.
+// Set3 sizes itself in groups of eight slots and admits set3MaxAvgGroupLoad
+// elements per group, so a capacity of c asks for ceil(c/load) groups, rounded
+// up to a prime. Inverting that gives the capacity which produces the wanted
+// number of slots; the prime rounding means the result is approximate, which is
+// why the achieved load factor is measured afterwards rather than assumed.
 func set3CapacityForSlots(slots float64) uint32 {
-	const maxAvgGroupLoad = 6.666666666666667
 	groups := slots / 8
 	if groups < 1 {
 		groups = 1
 	}
-	return uint32(groups * maxAvgGroupLoad) //nolint:gosec
+	return uint32(groups * set3MaxAvgGroupLoad) //nolint:gosec
 }
 
 // measureSet3Load builds a Set3 at the given capacity, fills it with size
@@ -174,4 +187,18 @@ func set3CapacityMatchingMap[T comparable](keys []T, size int) (capacity uint32,
 	}
 	capacity = set3CapacityForSlots(slots)
 	return capacity, measureSet3Load(keys, size, capacity), mapLoad
+}
+
+// LabLoadConstantCheck measures the occupancy a set actually reaches when it is
+// filled to the capacity it was built with, which is the library's average
+// group load divided by the eight slots in a group.
+//
+// It exists so that a test can compare the lab's copy of that constant against
+// the library's behaviour rather than against the library's source, which it
+// cannot see. Returns the measured constant, i.e. eight times the occupancy.
+func LabLoadConstantCheck() float64 {
+	const size = 1 << 16
+	keys := buildKeys(makeUint64Key, memberDomain, size)
+	load := measureSet3Load(keys, size, uint32(size))
+	return load * 8
 }
