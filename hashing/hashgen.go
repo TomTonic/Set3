@@ -26,6 +26,11 @@ var generatedHashCache sync.Map // map[reflect.Type]HashFunction
 //     straight-line hashers instead of the generic block loop.
 //   - Special fields (float32, float64, complex64, complex128, string) are
 //     handled with canonicalization logic.
+//   - A type whose fields reduce to canonical 64-bit words is hashed by
+//     wyhash's own arithmetic over those words, which overlaps the work
+//     instead of making each field wait for the previous field's hash. See
+//     wordplan.go for which types qualify and wywords.go for the mixing;
+//     measured against the chain below it is 19% to 67% faster.
 //   - Small op counts (1–8) produce dedicated closures with captured
 //     function pointers that Go can inline.
 //   - The general N-op path uses an array of (HashFunction, offset) pairs
@@ -299,10 +304,18 @@ func buildStructHasher(t reflect.Type) HashFunction {
 		}
 	}
 
-	return buildClosureFromOps(mergeByteBlocks(ops))
+	merged := mergeByteBlocks(ops)
+	// A type whose fields become canonical words is hashed by wyhash's own
+	// arithmetic over those words rather than by threading the seed through one
+	// full hash per field. See wordplan.go for which types qualify.
+	if fn := buildWordClosure(merged); fn != nil {
+		return fn
+	}
+	return buildClosureFromOps(merged)
 }
 
-// buildArrayHasher generates a HashFunction for array types.
+// buildArrayHasher generates a HashFunction for array types. An array of
+// floats reaches the same word path as a struct of them.
 func buildArrayHasher(t reflect.Type) HashFunction {
 	if t.Len() == 0 {
 		return func(_ unsafe.Pointer, seed uint64) uint64 {
@@ -330,29 +343,46 @@ func buildArrayHasher(t reflect.Type) HashFunction {
 		}
 	}
 
-	return buildClosureFromOps(mergeByteBlocks(ops))
+	merged := mergeByteBlocks(ops)
+	if fn := buildWordClosure(merged); fn != nil {
+		return fn
+	}
+	return buildClosureFromOps(merged)
 }
 
 // ── Closure construction ────────────────────────────────────────────────────
 
 // buildClosureFromOps creates a single HashFunction closure from micro-ops.
+func buildClosureFromOps(ops []microOp) HashFunction {
+	fops := make([]fieldOp, len(ops))
+	for i, op := range ops {
+		fops[i] = microOpToFieldOp(op)
+	}
+	return buildClosureFromFieldOps(fops)
+}
+
+// buildClosureFromFieldOps chains ready-made field ops into one closure.
 // For 1–8 ops, fully unrolled closures with captured function pointers are
 // emitted so that Go can inline the inner calls. For larger counts, a tight
 // loop over a frozen fieldOp slice is used.
-func buildClosureFromOps(ops []microOp) HashFunction {
-	switch len(ops) {
+//
+// Each op is handed the previous op's result as its seed, so this is the
+// serial shape that wordplan.go exists to avoid where it can. It remains the
+// right shape for ops that are real calls — see that file's header.
+func buildClosureFromFieldOps(fops []fieldOp) HashFunction {
+	switch len(fops) {
 	case 0:
 		return func(_ unsafe.Pointer, seed uint64) uint64 {
 			return WH64Det(0, seed)
 		}
 	case 1:
-		fop0 := microOpToFieldOp(ops[0])
+		fop0 := fops[0]
 		fn0, off0 := fop0.fn, fop0.offset
 		return func(p unsafe.Pointer, seed uint64) uint64 {
 			return fn0(unsafe.Add(p, off0), seed) //nolint:gosec
 		}
 	case 2:
-		fop0, fop1 := microOpToFieldOp(ops[0]), microOpToFieldOp(ops[1])
+		fop0, fop1 := fops[0], fops[1]
 		fn0, off0 := fop0.fn, fop0.offset
 		fn1, off1 := fop1.fn, fop1.offset
 		return func(p unsafe.Pointer, seed uint64) uint64 {
@@ -360,7 +390,7 @@ func buildClosureFromOps(ops []microOp) HashFunction {
 			return fn1(unsafe.Add(p, off1), h)  //nolint:gosec
 		}
 	case 3:
-		fop0, fop1, fop2 := microOpToFieldOp(ops[0]), microOpToFieldOp(ops[1]), microOpToFieldOp(ops[2])
+		fop0, fop1, fop2 := fops[0], fops[1], fops[2]
 		fn0, off0 := fop0.fn, fop0.offset
 		fn1, off1 := fop1.fn, fop1.offset
 		fn2, off2 := fop2.fn, fop2.offset
@@ -370,7 +400,7 @@ func buildClosureFromOps(ops []microOp) HashFunction {
 			return fn2(unsafe.Add(p, off2), h)  //nolint:gosec
 		}
 	case 4:
-		fop0, fop1, fop2, fop3 := microOpToFieldOp(ops[0]), microOpToFieldOp(ops[1]), microOpToFieldOp(ops[2]), microOpToFieldOp(ops[3])
+		fop0, fop1, fop2, fop3 := fops[0], fops[1], fops[2], fops[3]
 		fn0, off0 := fop0.fn, fop0.offset
 		fn1, off1 := fop1.fn, fop1.offset
 		fn2, off2 := fop2.fn, fop2.offset
@@ -382,7 +412,7 @@ func buildClosureFromOps(ops []microOp) HashFunction {
 			return fn3(unsafe.Add(p, off3), h)  //nolint:gosec
 		}
 	case 5:
-		fop0, fop1, fop2, fop3, fop4 := microOpToFieldOp(ops[0]), microOpToFieldOp(ops[1]), microOpToFieldOp(ops[2]), microOpToFieldOp(ops[3]), microOpToFieldOp(ops[4])
+		fop0, fop1, fop2, fop3, fop4 := fops[0], fops[1], fops[2], fops[3], fops[4]
 		fn0, off0 := fop0.fn, fop0.offset
 		fn1, off1 := fop1.fn, fop1.offset
 		fn2, off2 := fop2.fn, fop2.offset
@@ -396,7 +426,7 @@ func buildClosureFromOps(ops []microOp) HashFunction {
 			return fn4(unsafe.Add(p, off4), h)  //nolint:gosec
 		}
 	case 6:
-		fop0, fop1, fop2, fop3, fop4, fop5 := microOpToFieldOp(ops[0]), microOpToFieldOp(ops[1]), microOpToFieldOp(ops[2]), microOpToFieldOp(ops[3]), microOpToFieldOp(ops[4]), microOpToFieldOp(ops[5])
+		fop0, fop1, fop2, fop3, fop4, fop5 := fops[0], fops[1], fops[2], fops[3], fops[4], fops[5]
 		fn0, off0 := fop0.fn, fop0.offset
 		fn1, off1 := fop1.fn, fop1.offset
 		fn2, off2 := fop2.fn, fop2.offset
@@ -412,7 +442,7 @@ func buildClosureFromOps(ops []microOp) HashFunction {
 			return fn5(unsafe.Add(p, off5), h)  //nolint:gosec
 		}
 	case 7:
-		fop0, fop1, fop2, fop3, fop4, fop5, fop6 := microOpToFieldOp(ops[0]), microOpToFieldOp(ops[1]), microOpToFieldOp(ops[2]), microOpToFieldOp(ops[3]), microOpToFieldOp(ops[4]), microOpToFieldOp(ops[5]), microOpToFieldOp(ops[6])
+		fop0, fop1, fop2, fop3, fop4, fop5, fop6 := fops[0], fops[1], fops[2], fops[3], fops[4], fops[5], fops[6]
 		fn0, off0 := fop0.fn, fop0.offset
 		fn1, off1 := fop1.fn, fop1.offset
 		fn2, off2 := fop2.fn, fop2.offset
@@ -430,7 +460,7 @@ func buildClosureFromOps(ops []microOp) HashFunction {
 			return fn6(unsafe.Add(p, off6), h)  //nolint:gosec
 		}
 	case 8:
-		fop0, fop1, fop2, fop3, fop4, fop5, fop6, fop7 := microOpToFieldOp(ops[0]), microOpToFieldOp(ops[1]), microOpToFieldOp(ops[2]), microOpToFieldOp(ops[3]), microOpToFieldOp(ops[4]), microOpToFieldOp(ops[5]), microOpToFieldOp(ops[6]), microOpToFieldOp(ops[7])
+		fop0, fop1, fop2, fop3, fop4, fop5, fop6, fop7 := fops[0], fops[1], fops[2], fops[3], fops[4], fops[5], fops[6], fops[7]
 		fn0, off0 := fop0.fn, fop0.offset
 		fn1, off1 := fop1.fn, fop1.offset
 		fn2, off2 := fop2.fn, fop2.offset
@@ -450,10 +480,8 @@ func buildClosureFromOps(ops []microOp) HashFunction {
 			return fn7(unsafe.Add(p, off7), h)  //nolint:gosec
 		}
 	default:
-		frozen := make([]fieldOp, len(ops))
-		for i, op := range ops {
-			frozen[i] = microOpToFieldOp(op)
-		}
+		frozen := make([]fieldOp, len(fops))
+		copy(frozen, fops)
 		return func(p unsafe.Pointer, seed uint64) uint64 {
 			h := seed
 			for _, fop := range frozen {

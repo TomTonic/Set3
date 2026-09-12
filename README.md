@@ -304,12 +304,67 @@ structural tests on top of that, including one that pins the read window to
 exactly the key and one that holds each fixed-size entry point equal to the
 generic path.
 
-One gap is known and is not fixed. The generated hashers for structs whose
-fields are integers or pointers merge the whole struct into one block and go
-through the routine above; a struct containing floats or strings has to hash its
-fields separately and chain them, which costs about 70% at three fields and 90%
-at six against what a single block would. Integer and pointer structs — the
-common case, and the `struct3x64` column here — are unaffected.
+#### Struct keys that are not one block
+
+A struct of integers or pointers merges into a single block of memory and goes
+straight through the routine above — that is the `struct3x64` column here, and
+it never had a problem. A struct holding floats cannot: -0.0 and +0.0 compare
+equal and must not hash apart, every NaN has to hash alike, and the padding
+between fields holds whatever was there before. The generator therefore used to
+hash such a struct one field at a time, threading each field's hash into the
+next as its seed. An N-field struct cost 2N widening multiplies that the
+processor could not overlap, because each one needed the previous one's result.
+
+It no longer does. Fields that reduce to a canonical 64-bit word — a float, a
+complex part, an eight-byte run of byte-stable fields — are turned into a word
+sequence, and that sequence is hashed by `wyBlock`'s own arithmetic, which
+consumes two words per multiply and splits into three independent lanes past
+six words. Fields that cannot become a word keep threading the seed, and
+strings deliberately do: `HashString` is a real call, so the calls serialize
+whatever the data dependencies say, and lane-mixing three string fields
+measured 6% *slower* than chaining them.
+
+Measured with rtcompare, ABBA-interleaved, 401 paired rounds of a million
+hashes each, comparing the two closures the generator builds for the same type:
+
+| struct shape | chain | words | words are faster by |
+| --- | --- | --- | --- |
+| 2 × `float64` | 3.74 ns | 1.96 ns | **47.6%** |
+| 3 × `float64` | 5.27 ns | 3.13 ns | **40.5%** |
+| 4 × `float64` | 6.85 ns | 3.89 ns | **43.1%** |
+| 6 × `float64` | 10.07 ns | 5.23 ns | **48.0%** |
+| 8 × `float64` | 13.97 ns | 6.86 ns | **50.9%** |
+| 3 × `float32` | 6.33 ns | 2.93 ns | **53.6%** |
+| 6 × `float32` | 11.81 ns | 4.46 ns | **62.2%** |
+| 8 × `float32` | 16.89 ns | 5.62 ns | **66.8%** |
+| 2 × `complex128` | 5.69 ns | 3.89 ns | **31.6%** |
+| 2 × `int64` + `float64` | 3.40 ns | 2.75 ns | **19.1%** |
+| 2 × `float64` + `string` | 6.09 ns | 4.84 ns | **20.5%** |
+
+Each row is established at 100% bootstrap confidence against the ten-percent
+threshold below its median — the two `float32` rows above 60% only to 50%,
+because that is the highest threshold the test asks for. The `float32` rows
+gain most because the chain hashed each float32 with splitmix64: two dependent
+multiplies for four bytes of input.
+
+One case is still declined: a struct mixing four-byte and eight-byte words, an
+`int32` beside a `float64` for instance. Supporting it needs a second branch
+per word to choose the load width, and that branch was measured to cost more
+than the mixing saves — 7.22 ns against 3.65 on six words. Such a type keeps
+the chain and is correct, just not accelerated.
+
+The mixing is not new arithmetic. Each of the seven word mixers is a
+transcription of `wyBlock` at one length, and
+`TestWordMixersAreTheGenericPath` requires each to return exactly what the
+generic routine returns for the same bytes — an exact oracle rather than a
+statistical argument. On top of that, `TestWordPathMatchesAnIndependentWordSequence`
+spells out by hand which words each type should produce, and
+`TestWhichTypesTakeTheWordPath` pins the classification including every
+declined case.
+
+The suite charts predate this change, and the chart below is unaffected by it:
+`struct3x64` is three `uint64` fields, which merge into one 24-byte block and
+never took the per-field path at all.
 
 ![Set3 vs map[struct]struct{}](lab/results/setcompare/speedup-struct3x64.svg)
 

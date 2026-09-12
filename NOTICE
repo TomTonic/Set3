@@ -13,6 +13,11 @@ distribution's LICENSE file:
     internal/runtime/maps (runtime_fallback.go), the Go authors' adaptation of
     wyhash (https://github.com/wangyi-fudan/wyhash) by Wang Yi.
 
+  - hashing/wywords.go transcribes that same routine at lengths that are a
+    multiple of eight, taking its input in registers rather than from memory.
+    The arithmetic is unchanged, and each transcription is held equal to the
+    routine it came from by TestWordMixersAreTheGenericPath.
+
   - lab/hashquality/smhasher_test.go is a port of hash/maphash/smhasher_test.go,
     which is itself a port of part of SMHasher by Austin Appleby
     (https://github.com/aappleby/smhasher).

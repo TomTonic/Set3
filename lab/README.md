@@ -53,8 +53,9 @@ demand).
 | [`hashbench/`](hashbench) | Shared plumbing for the hash experiments: data generators, statistics, small PRNGs. |
 | [`hashquality/`](hashquality) | Distribution, uniformity, avalanche and ranking suites over `hashalt` and the production functions, plus the Go authors' SMHasher port retargeted onto `hashing` (`smhasher_test.go`). Some suites run for tens of minutes. |
 | [`hashperf/`](hashperf) | Runtime A/B comparisons of hash functions via `rtcompare`. |
+| `../hashing/wordplan_rtcompare_test.go` | Lab code that does not live here. It carries the `set3lab` tag like everything in this directory, but sits in the `hashing` package because it compares two package-internal closure builders — the word-mixing struct hasher against the seed-threading chain — and a replica of either one would be a baseline nobody could check. Run it with `go test -tags set3lab -run TestRtcompare_WordPath -v ./hashing`. |
 | [`setbench/`](setbench) | The older `Set3` vs. `map[T]struct{}` measurements: fill/lookup series, memory footprint, a hand-rolled A/B/B/A comparison, and a randomised operation mix for CPU profiling. |
-| [`setcompare/`](setcompare) | The current `Set3` vs. `map[T]struct{}` suite: ten workloads across four key types and five sizes, measured through the full `rtcompare` protocol, plus a calibrated memory pass. Writes CSV. |
+| [`setcompare/`](setcompare) | The current `Set3` vs. `map[T]struct{}` suite: thirteen workloads across four key types and four sizes, measured through the full `rtcompare` protocol, plus a calibrated memory pass. Writes CSV. |
 | [`cmd/powerchi2/`](cmd/powerchi2) | Chi-squared power and sample-size calculator, used to size the tests in `hashquality`. |
 | [`cmd/primetest/`](cmd/primetest) | Standalone driver for the primality search that `internal/prime` does inside the library. |
 | [`cmd/setchart/`](cmd/setchart) | Turns `setcompare`'s CSV into the SVG charts the top-level README embeds. |
