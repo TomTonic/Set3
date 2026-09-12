@@ -144,6 +144,33 @@ func buildLookupWorkload[T comparable](w *Workload, mk keyMaker[T], size int, hi
 	return w
 }
 
+// warmToSteadyState runs both batches until the containers have stopped
+// settling, before anything is measured.
+//
+// Every churning workload here starts from EmptyWithCapacity, which by design
+// leaves the table at the occupancy the caller asked for and therefore with
+// almost no free slots. A window needs free slots to keep probing short, so the
+// first turn grows the table once, and the tombstone equilibrium takes about as
+// long to establish. Measuring through that means measuring a transient: the
+// timing is averaged over a long budget and barely notices, but rtcompare's
+// allocation probe is a single short window and lands inside it — which is how
+// churn-fresh came to report 207 kB per operation for a workload that
+// allocates nothing once settled.
+//
+// One full window turn is enough. Measured on the fresh-key window, the growth
+// happens inside the first n/8 operations and allocation is flat zero from
+// there on, at every size from 16 384 to 2 097 152.
+//
+// Both sides are warmed, and through the batch functions themselves, so that
+// their cursors stay in step and Verify still has something coherent to check.
+func warmToSteadyState(w *Workload, ops int) {
+	if ops <= 0 {
+		return
+	}
+	w.Set3Batch(uint64(ops)) //nolint:gosec
+	w.MapBatch(uint64(ops))  //nolint:gosec
+}
+
 // buildChurnFreshWorkload is a fixed-size window over keys the container has
 // never seen before.
 //
@@ -224,6 +251,7 @@ func buildChurnFreshWorkload[T comparable](w *Workload, mk keyMaker[T], size int
 		s = nil
 		m = nil
 	}
+	warmToSteadyState(w, size)
 	return w
 }
 
@@ -296,6 +324,7 @@ func buildSlidingWindowWorkload[T comparable](w *Workload, mk keyMaker[T], size 
 		s = nil
 		m = nil
 	}
+	warmToSteadyState(w, size)
 	return w
 }
 
@@ -412,6 +441,7 @@ func buildMixedIndexWorkload[T comparable](w *Workload, mk keyMaker[T], size int
 		s = nil
 		m = nil
 	}
+	warmToSteadyState(w, size)
 	return w
 }
 

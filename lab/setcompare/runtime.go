@@ -134,6 +134,9 @@ func MeasureRuntime(cfg Config, logf func(format string, args ...any)) []Runtime
 				if !info.appliesTo(keyType, size) {
 					continue
 				}
+				if !cfg.wantsCell(info.name, keyType, size) {
+					continue
+				}
 				r.measureCell(info, keyType, size)
 			}
 		}

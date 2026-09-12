@@ -19,6 +19,7 @@ package setcompare
 import (
 	"fmt"
 	"os"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -101,6 +102,23 @@ type Config struct {
 	// SkipLoadCurve turns off the load-curve pass. SET3_CMP_SKIP_CURVE.
 	SkipLoadCurve bool
 
+	// Cells restricts the runtime pass to named cells, each written
+	// "scenario/keytype/size". Empty means every cell the other filters allow.
+	// SET3_CMP_CELLS, comma separated.
+	//
+	// It exists for one job: re-measuring the handful of cells a run reported
+	// as untrustworthy, without paying for the whole schedule again. Pair it
+	// with Merge and a longer Budget.
+	Cells []string
+
+	// Merge folds this run's rows into the CSV files already in OutDir instead
+	// of replacing them: a row with the same scenario, key type and size is
+	// overwritten, everything else is kept where it was. SET3_CMP_MERGE.
+	//
+	// Without it a targeted re-measurement would leave an output directory
+	// holding four rows.
+	Merge bool
+
 	// Tag is an optional label written into the CSV header, e.g. a Go version
 	// or "pgo". SET3_CMP_TAG.
 	Tag string
@@ -162,6 +180,10 @@ func LoadConfig(short bool) (Config, error) {
 	if raw := os.Getenv("SET3_CMP_SCENARIOS"); raw != "" {
 		cfg.Scenarios = splitList(raw)
 	}
+	if raw := os.Getenv("SET3_CMP_CELLS"); raw != "" {
+		cfg.Cells = splitList(raw)
+	}
+	cfg.Merge = envBool("SET3_CMP_MERGE", false)
 	cfg.SkipMemory = envBool("SET3_CMP_SKIP_MEMORY", false)
 	cfg.SkipRuntime = envBool("SET3_CMP_SKIP_RUNTIME", false)
 	cfg.SkipLoadCurve = envBool("SET3_CMP_SKIP_CURVE", false)
@@ -282,4 +304,20 @@ func envDuration(key string, def time.Duration) time.Duration {
 		return def
 	}
 	return v
+}
+
+// wantsCell reports whether one cell is in the Cells filter. An empty filter
+// admits everything, which is the ordinary case.
+func (c Config) wantsCell(scenario, keyType string, size int) bool {
+	if len(c.Cells) == 0 {
+		return true
+	}
+	want := fmt.Sprintf("%s/%s/%d", scenario, keyType, size)
+	return slices.Contains(c.Cells, want)
+}
+
+// CellName spells a cell the way SET3_CMP_CELLS expects it, so that a tool
+// reading a runtime.csv can hand the untrustworthy rows straight back.
+func CellName(scenario, keyType string, size int) string {
+	return fmt.Sprintf("%s/%s/%d", scenario, keyType, size)
 }

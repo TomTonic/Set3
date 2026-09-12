@@ -254,9 +254,11 @@ func microOpToFieldOp(op microOp) fieldOp {
 			if specialized := fixedSizeByteBlockHasher(size); specialized != nil {
 				fn = specialized
 			} else {
+				// wyBlock rather than HashBytesBlock: the slice would only be
+				// built so that HashBytesBlock could recover the pointer from
+				// it again. One step fewer, not a measurable one.
 				fn = func(p unsafe.Pointer, seed uint64) uint64 {
-					b := unsafe.Slice((*byte)(p), size) //nolint:gosec
-					return HashBytesBlock(seed, b)
+					return wyBlock(p, size, seed)
 				}
 			}
 		}
@@ -314,8 +316,7 @@ func buildArrayHasher(t reflect.Type) HashFunction {
 			return specialized
 		}
 		return func(p unsafe.Pointer, seed uint64) uint64 {
-			b := unsafe.Slice((*byte)(p), totalSize) //nolint:gosec
-			return HashBytesBlock(seed, b)
+			return wyBlock(p, totalSize, seed)
 		}
 	}
 

@@ -17,10 +17,12 @@
 package setcompare
 
 import (
+	"encoding/csv"
 	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -70,14 +72,22 @@ func WriteResults(cfg Config, runtimeRows []RuntimeResult, memoryRows []MemoryRe
 
 	if len(runtimeRows) > 0 {
 		path := filepath.Join(cfg.OutDir, "runtime.csv")
-		if err := writeCSV(path, runtimeHeader, runtimeRowsToRecords(runtimeRows)); err != nil {
+		records, err := maybeMerge(cfg, path, runtimeHeader, runtimeRowsToRecords(runtimeRows))
+		if err != nil {
+			return written, err
+		}
+		if err := writeCSV(path, runtimeHeader, records); err != nil {
 			return written, err
 		}
 		written = append(written, path)
 	}
 	if len(memoryRows) > 0 {
 		path := filepath.Join(cfg.OutDir, "memory.csv")
-		if err := writeCSV(path, memoryHeader, memoryRowsToRecords(memoryRows)); err != nil {
+		records, err := maybeMerge(cfg, path, memoryHeader, memoryRowsToRecords(memoryRows))
+		if err != nil {
+			return written, err
+		}
+		if err := writeCSV(path, memoryHeader, records); err != nil {
 			return written, err
 		}
 		written = append(written, path)
@@ -264,4 +274,91 @@ func SummarizeMemory(rows []MemoryResult) string {
 	}
 	return fmt.Sprintf("%d memory cells: Set3 holds %.1f%% of the native map's bytes on average (range %.1f%% to %.1f%%)\n",
 		n, sum/float64(n)*100, lo*100, hi*100)
+}
+
+// maybeMerge folds fresh records into whatever is already at path.
+//
+// A targeted re-measurement produces a handful of rows, and writing those on
+// their own would replace a full run's output with four lines. With Merge set,
+// a row whose first three columns — scenario, key type and size — match an
+// existing one replaces it in place; rows that are new are appended; rows the
+// re-measurement did not touch stay exactly as they were, in their original
+// order.
+//
+// The first three columns identify a cell in both the runtime and the memory
+// table, which is what lets one function serve both.
+//
+// Without Merge, or when there is nothing at path yet, the fresh records are
+// returned unchanged.
+func maybeMerge(cfg Config, path string, header []string, fresh [][]string) ([][]string, error) {
+	if !cfg.Merge {
+		return fresh, nil
+	}
+	existing, err := readCSVRecords(path, header)
+	if err != nil {
+		return nil, err
+	}
+	if len(existing) == 0 {
+		return fresh, nil
+	}
+
+	key := func(rec []string) string {
+		if len(rec) < 3 {
+			return ""
+		}
+		return rec[0] + "\x00" + rec[1] + "\x00" + rec[2]
+	}
+	replacement := make(map[string][]string, len(fresh))
+	for _, rec := range fresh {
+		replacement[key(rec)] = rec
+	}
+
+	merged := make([][]string, 0, len(existing)+len(fresh))
+	seen := make(map[string]struct{}, len(existing))
+	for _, rec := range existing {
+		k := key(rec)
+		seen[k] = struct{}{}
+		if rep, ok := replacement[k]; ok {
+			merged = append(merged, rep)
+			continue
+		}
+		merged = append(merged, rec)
+	}
+	for _, rec := range fresh {
+		if _, ok := seen[key(rec)]; !ok {
+			merged = append(merged, rec)
+		}
+	}
+	return merged, nil
+}
+
+// readCSVRecords reads back a table this package wrote, without its header.
+//
+// A header that no longer matches means the file on disk was written by a
+// different version of the suite, and merging into it would silently mix two
+// column layouts. That is an error rather than a fallback.
+func readCSVRecords(path string, header []string) ([][]string, error) {
+	f, err := os.Open(path) //nolint:gosec // the path is the suite's own output directory
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("read %s for merging: %w", path, err)
+	}
+	defer f.Close() //nolint:errcheck
+
+	rd := csv.NewReader(f)
+	rd.Comma = ';'
+	rd.FieldsPerRecord = -1
+	records, err := rd.ReadAll()
+	if err != nil {
+		return nil, fmt.Errorf("parse %s for merging: %w", path, err)
+	}
+	if len(records) == 0 {
+		return nil, nil
+	}
+	if !slices.Equal(records[0], header) {
+		return nil, fmt.Errorf("%s was written with a different column layout; merge would mix two formats", path)
+	}
+	return records[1:], nil
 }

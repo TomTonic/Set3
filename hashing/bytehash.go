@@ -35,8 +35,14 @@ func HashAsByteArray[K comparable](p unsafe.Pointer, seed uint64) uint64 {
 	if specialized := fixedSizeByteBlockHasher(size); specialized != nil {
 		return specialized(p, seed)
 	}
-	b := unsafe.Slice((*byte)(p), size) //nolint:gosec
-	return HashBytesBlock(seed, b)
+	// Straight into the shared body rather than through HashBytesBlock, which
+	// would take a slice header apart again to recover the pointer this
+	// function already holds. It is one step fewer, not a speed-up: measured on
+	// a nine-byte struct the difference was 6.13 ns against 6.25, inside the
+	// noise. What that size actually pays for is an extra layer of indirect
+	// call, because a type that is not raw-block eligible goes through the
+	// generated closure as well.
+	return wyBlock(p, size, seed)
 }
 
 // HashString hashes a Go string by reading its bytes directly through pointer
