@@ -2,55 +2,57 @@
 
 ### Set3 against `map[T]struct{}`
 
-go1.27.1 linux/amd64, 24 CPUs · measured 2026-09-11 · rtcompare, 95% intervals
+go1.27.1 linux/amd64, 24 CPUs · measured 2026-09-12 · rtcompare, 95% intervals
 
 | Workload | key type | sizes measured | Set3 vs. native map | resolved |
 | --- | --- | --- | --- | --- |
-| `build-presized` | uint64 | 1k – 2.1M | +43% to +70% | 4/4 |
-| `build-presized` | string | 1k – 2.1M | +38% to +71% | 4/4 |
-| `build-presized` | struct3x64 | 1k – 2.1M | +56% to +73% | 4/4 |
-| `build-growing` | uint64 | 1k – 2.1M | +35% to +49% | 4/4 |
-| `build-growing` | string | 1k – 2.1M | +12% to +30% | 4/4 |
-| `dedup-stream` | uint64 | 1k – 2.1M | +24% to +34% | 4/4 |
-| `dedup-stream` | string | 1k – 2.1M | +1% to +12% | 3/4 |
-| `dedup-stream` | struct3x64 | 1k – 2.1M | +42% to +50% | 4/4 |
-| `lookup-hit30` | uint64 | 1k – 2.1M | -22% to +3% | 3/4 |
-| `lookup-hit30` | string | 1k – 2.1M | -26% to -3% | 3/4 |
-| `lookup-hit30` | struct3x64 | 1k – 2.1M | -11% to +15% | 4/4 |
-| `lookup-hit95` | uint64 | 1k – 2.1M | +4% to +20% | 3/4 |
-| `lookup-hit95` | struct3x64 | 1k – 2.1M | +19% to +38% | 4/4 |
+| `build-presized` | uint64 | 1k – 2.1M | +41% to +65% | 4/4 |
+| `build-presized` | string | 1k – 2.1M | +37% to +63% | 4/4 |
+| `build-presized` | struct3x64 | 1k – 2.1M | +53% to +70% | 4/4 |
+| `build-growing` | uint64 | 1k – 2.1M | +17% to +41% | 4/4 |
+| `build-growing` | string | 1k – 2.1M | -7% to +22% | 3/4 |
+| `dedup-stream` | uint64 | 1k – 2.1M | +17% to +27% | 4/4 |
+| `dedup-stream` | string | 1k – 2.1M | -21% to +7% | 3/4 |
+| `dedup-stream` | struct3x64 | 1k – 2.1M | +29% to +39% | 4/4 |
+| `lookup-hit30` | uint64 | 1k – 2.1M | +17% to +29% | 4/4 |
+| `lookup-hit30` | string | 1k – 2.1M | +6% to +18% | 4/4 |
+| `lookup-hit30` | struct3x64 | 1k – 2.1M | +18% to +35% | 4/4 |
+| `lookup-hit95` | uint64 | 1k – 2.1M | +4% to +28% | 3/4 |
+| `lookup-hit95` | struct3x64 | 1k – 2.1M | +17% to +33% | 3/4 |
 | `lookup-hit30-eqload` | uint64 | 1k – 2.1M | +21% to +35% | 4/4 |
-| `lookup-hit30-eqload` | string | 1k – 2.1M | +8% to +18% | 4/4 |
-| `lookup-hit30-eqload` | struct3x64 | 1k – 2.1M | +20% to +34% | 4/4 |
-| `lookup-hit95-eqload` | uint64 | 1k – 2.1M | +2% to +28% | 3/4 |
-| `lookup-hit95-eqload` | struct3x64 | 1k – 2.1M | +14% to +36% | 3/4 |
-| `sliding-window` | uint64 | 1k – 2.1M | +33% to +48% | 4/4 |
-| `sliding-window` | string | 1k – 2.1M | +30% to +39% | 4/4 |
-| `mixed-index` | uint64 | 1k – 2.1M | +7% to +26% | 4/4 |
-| `mixed-index` | string | 1k – 2.1M | -1% to +20% | 4/4 |
-| `graph-visited` | uint64 | 1k – 262k | +24% to +40% | 3/3 |
-| `intersect` | uint64 | 1k – 2.1M | +41% to +64% | 4/4 |
-| `intersect` | string | 1k – 2.1M | +17% to +49% | 4/4 |
-| `iterate` | uint64 | 1k – 2.1M | +68% to +75% | 4/4 |
-| `iterate` | string | 1k – 2.1M | +60% to +71% | 4/4 |
-| `iterate` | struct3x64 | 1k – 2.1M | +68% to +74% | 4/4 |
+| `lookup-hit30-eqload` | string | 1k – 2.1M | +9% to +18% | 4/4 |
+| `lookup-hit30-eqload` | struct3x64 | 1k – 2.1M | +21% to +31% | 4/4 |
+| `lookup-hit95-eqload` | uint64 | 1k – 2.1M | -2% to +26% | 3/4 |
+| `lookup-hit95-eqload` | struct3x64 | 1k – 2.1M | +6% to +34% | 3/4 |
+| `sliding-window` | uint64 | 1k – 2.1M | +47% to +56% | 4/4 |
+| `sliding-window` | string | 1k – 2.1M | +28% to +49% | 4/4 |
+| `churn-fresh` | uint64 | 1k – 2.1M | +45% to +55% | 4/4 |
+| `churn-fresh` | struct3x64 | 1k – 2.1M | +50% to +61% | 4/4 |
+| `mixed-index` | uint64 | 1k – 2.1M | +13% to +41% | 4/4 |
+| `mixed-index` | string | 1k – 2.1M | +5% to +25% | 4/4 |
+| `graph-visited` | uint64 | 1k – 262k | +33% to +44% | 3/3 |
+| `intersect` | uint64 | 1k – 2.1M | +32% to +60% | 4/4 |
+| `intersect` | string | 1k – 2.1M | +1% to +47% | 3/4 |
+| `iterate` | uint64 | 1k – 2.1M | +58% to +70% | 4/4 |
+| `iterate` | string | 1k – 2.1M | +56% to +69% | 4/4 |
+| `iterate` | struct3x64 | 1k – 2.1M | +61% to +72% | 4/4 |
 
 Positive means Set3 is faster. A cell counts as resolved only when its interval excludes zero *and* the difference exceeds the machine's measured noise floor.
 
 | Fill history | key type | elements | Set3 | `map[T]struct{}` | ratio |
 | --- | --- | --- | --- | --- | --- |
-| `presized` | uint64 | 2.1M | 11.1 B/elem | 36.1 B/elem | **0.31×** |
-| `presized` | string | 2.1M | 20.9 B/elem | 53.3 B/elem | **0.39×** |
-| `presized` | struct3x64 | 2.1M | 30.8 B/elem | 80.1 B/elem | **0.38×** |
-| `grown` | uint64 | 2.1M | 13.1 B/elem | 36.1 B/elem | **0.36×** |
-| `grown` | string | 2.1M | 24.7 B/elem | 53.3 B/elem | **0.46×** |
-| `grown` | struct3x64 | 2.1M | 36.4 B/elem | 80.1 B/elem | **0.45×** |
-| `half-removed` | uint64 | 1M | 22.2 B/elem | 72.2 B/elem | **0.31×** |
-| `half-removed` | string | 1M | 41.9 B/elem | 106.7 B/elem | **0.39×** |
-| `half-removed` | struct3x64 | 1M | 61.6 B/elem | 160.2 B/elem | **0.38×** |
-| `window-steady` | uint64 | 2.1M | 16.6 B/elem | 36.1 B/elem | **0.46×** |
-| `window-steady` | string | 2.1M | 31.4 B/elem | 53.3 B/elem | **0.59×** |
-| `window-steady` | struct3x64 | 2.1M | 46.2 B/elem | 80.1 B/elem | **0.58×** |
+| `presized` | uint64 | 2.1M | 15.0 B/elem | 36.1 B/elem | **0.42×** |
+| `presized` | string | 2.1M | 28.3 B/elem | 53.3 B/elem | **0.53×** |
+| `presized` | struct3x64 | 2.1M | 41.7 B/elem | 80.1 B/elem | **0.52×** |
+| `grown` | uint64 | 2.1M | 19.6 B/elem | 36.1 B/elem | **0.54×** |
+| `grown` | string | 2.1M | 37.1 B/elem | 53.3 B/elem | **0.70×** |
+| `grown` | struct3x64 | 2.1M | 54.6 B/elem | 80.1 B/elem | **0.68×** |
+| `half-removed` | uint64 | 1M | 30.0 B/elem | 72.2 B/elem | **0.42×** |
+| `half-removed` | string | 1M | 56.7 B/elem | 106.7 B/elem | **0.53×** |
+| `half-removed` | struct3x64 | 1M | 83.3 B/elem | 160.2 B/elem | **0.52×** |
+| `window-steady` | uint64 | 2.1M | 22.5 B/elem | 36.1 B/elem | **0.62×** |
+| `window-steady` | string | 2.1M | 42.5 B/elem | 53.3 B/elem | **0.80×** |
+| `window-steady` | struct3x64 | 2.1M | 62.5 B/elem | 80.1 B/elem | **0.78×** |
 
 Retained heap after a full collection, with the container reachable.
 
