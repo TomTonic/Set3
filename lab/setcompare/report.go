@@ -102,7 +102,20 @@ func WriteResults(cfg Config, runtimeRows []RuntimeResult, memoryRows []MemoryRe
 	}
 
 	path := filepath.Join(cfg.OutDir, "run.txt")
-	if err := os.WriteFile(path, []byte(manifest(cfg, runtimeRows, memoryRows, curve, elapsed)), 0o600); err != nil {
+	text := manifest(cfg, runtimeRows, memoryRows, curve, elapsed)
+	if cfg.Merge {
+		// A merge pass changes some rows of a table another pass produced, so
+		// replacing that pass's manifest would leave the file describing a run
+		// that no longer matches most of its own numbers. Appending keeps the
+		// history: read top to bottom and every row in the CSV is accounted
+		// for by one of the sections.
+		if prior, err := os.ReadFile(path); err == nil { //nolint:gosec // the suite's own output directory
+			text = string(prior) + "\n" + strings.Repeat("=", 72) + "\n" +
+				"A later pass merged rows into the tables described above.\n" +
+				strings.Repeat("=", 72) + "\n\n" + text
+		}
+	}
+	if err := os.WriteFile(path, []byte(text), 0o600); err != nil {
 		return written, fmt.Errorf("write %s: %w", path, err)
 	}
 	return append(written, path), nil
@@ -179,7 +192,24 @@ func manifest(cfg Config, runtimeRows []RuntimeResult, memoryRows []MemoryResult
 	fmt.Fprintf(&b, "elapsed:   %s\n", elapsed.Round(time.Second))
 	fmt.Fprintf(&b, "go:        %s %s/%s, %d CPUs\n", runtime.Version(), runtime.GOOS, runtime.GOARCH, runtime.NumCPU())
 	fmt.Fprintf(&b, "config:    %s\n", cfg)
-	fmt.Fprintf(&b, "rows:      %d runtime, %d memory, %d load-curve\n\n", len(runtimeRows), len(memoryRows), len(curve))
+	if cfg.Merge {
+		// A merge pass writes a handful of rows into a table that already holds
+		// a full run's worth, so its own counts describe neither the file nor
+		// the schedule. Saying that here is the difference between a manifest
+		// and a misleading one: an earlier version of this feature left a
+		// run.txt claiming 26 rows beside a CSV holding 119.
+		fmt.Fprintf(&b, "rows:      %d runtime, %d memory, %d load-curve — THIS PASS ONLY\n",
+			len(runtimeRows), len(memoryRows), len(curve))
+		b.WriteString("merged:    these rows were folded into the tables already in this directory;\n")
+		b.WriteString("           every other row is older and was measured under the config of\n")
+		b.WriteString("           whichever pass produced it. The cells this pass replaced:\n")
+		for _, r := range runtimeRows {
+			fmt.Fprintf(&b, "             %s\n", CellName(r.Scenario, r.KeyType, r.Size))
+		}
+		b.WriteString("\n")
+	} else {
+		fmt.Fprintf(&b, "rows:      %d runtime, %d memory, %d load-curve\n\n", len(runtimeRows), len(memoryRows), len(curve))
+	}
 
 	b.WriteString("Reading a runtime row\n")
 	b.WriteString("  delta_pct is positive when Set3 is faster. ci_low_pct/ci_high_pct bound it at\n")

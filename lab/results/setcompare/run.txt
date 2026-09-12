@@ -1,9 +1,9 @@
 Set3 vs. map[T]struct{} — rtcompare suite
-generated: 2026-09-12T09:58:07+02:00
-elapsed:   1h28m47s
+generated: 2026-09-12T14:45:18+02:00
+elapsed:   33m23s
 go:        go1.27.1 linux/amd64, 24 CPUs
-config:    sizes=[1000 16384 262144 2097152] curveSizes=[16384 2097152] keys=[uint64 string struct3x64] scenarios=[] budget=30s hardcap=5m0s resamples=5000 level=0.95 memRepeats=7 tag="load4.8-compact"
-rows:      119 runtime, 48 memory, 42 load-curve
+config:    sizes=[1000 16384 262144 2097152] curveSizes=[16384 2097152] keys=[uint64 string struct3x64] scenarios=[] budget=2m0s hardcap=10m0s resamples=5000 level=0.95 memRepeats=7 tag="load4.8-warmed+retry"
+rows:      26 runtime, 0 memory, 0 load-curve
 
 Reading a runtime row
   delta_pct is positive when Set3 is faster. ci_low_pct/ci_high_pct bound it at
@@ -39,13 +39,3 @@ Memory shapes
   grown         created empty, then filled — includes whatever capacity growth landed on
   half-removed  presized and filled, then every second element removed
   window-steady a sliding window that has churned through four times its own size
-
-churn-fresh's allocation column reports the warm-up, not the steady state. The
-workload presizes with EmptyWithCapacity, which leaves the table at 98% of its
-limit, so it grows once before settling; rtcompare's allocation probe is a short
-window and lands inside that. Measured deterministically instead — ReadMemStats
-around a fixed number of operations — the same workload allocates about 180
-bytes per operation over its first n/8 operations and 0.0 thereafter, at every
-size from 16 384 to 2 097 152. The timing in this file is averaged over the full
-budget and is dominated by the steady state, so it does not have the same
-problem.
