@@ -1,43 +1,43 @@
 keytype;size;impl;target_load;load;bytes_per_element;ns_per_lookup;delta_pct;ci_low_pct;ci_high_pct;noise_floor_pct;resolved;note
-uint64;16384;map;0.0000;0.4712;36.081;10.4110;0.000;0.000;0.000;0.0000;false;
-uint64;16384;Set3;0.8000;0.5710;15.762;7.7077;25.020;24.805;25.362;0.3759;true;
-uint64;16384;Set3;0.6500;0.4499;20.005;7.0009;31.273;31.015;31.550;0.7169;true;
-uint64;16384;Set3;0.5000;0.3529;25.505;6.8430;32.987;32.714;33.299;0.5337;true;
-uint64;16384;Set3;0.4000;0.2856;31.512;7.3024;31.353;30.143;33.027;0.4922;true;
-uint64;16384;Set3;0.3000;0.2117;42.505;6.9698;33.053;32.700;33.460;0.8423;true;
-uint64;16384;Set3;0.2500;0.1782;50.505;7.0125;32.892;32.304;33.309;0.6460;true;
-uint64;2097152;map;0.0000;0.4712;36.078;22.3409;0.000;0.000;0.000;0.0000;false;
-uint64;2097152;Set3;0.8000;0.5759;15.629;16.3502;32.467;25.075;46.374;1.1612;true;
-uint64;2097152;Set3;0.6500;0.4678;19.238;13.8757;37.891;22.338;45.029;1.2552;true;
-uint64;2097152;Set3;0.5000;0.3599;25.004;15.9752;31.959;16.841;46.360;0.7916;true;
-uint64;2097152;Set3;0.4000;0.2880;31.254;12.8502;28.795;27.387;33.121;5.4792;true;
-uint64;2097152;Set3;0.3000;0.2160;41.672;13.0812;27.226;25.782;28.725;0.3731;true;
-uint64;2097152;Set3;0.2500;0.1800;50.004;13.6938;24.510;22.178;28.073;0.4470;true;
-string;16384;map;0.0000;0.4688;53.331;14.5016;0.000;0.000;0.000;0.0000;false;
-string;16384;Set3;0.8000;0.5713;29.755;12.5836;14.795;14.373;15.141;0.4666;true;
-string;16384;Set3;0.6500;0.4594;37.005;12.0821;17.359;17.022;17.745;0.4500;true;in 44% of A/A runs this setup reported a difference between identical code, well above the 10% expected, treat any confidence from it with suspicion
-string;16384;Set3;0.5000;0.3579;47.505;11.7380;18.898;18.565;19.109;0.5018;true;candidate A drifted during the run, shifting +0.12% from its first half to its second, the machine did not hold still, candidate B drifted during the run, shifting +0.97% from its first half to its second, the machine did not hold still, in 38% of A/A runs this setup reported a difference between identical code, well above the 10% expected, treat any confidence from it with suspicion
-string;16384;Set3;0.4000;0.2857;59.505;11.7256;18.796;18.465;19.049;0.3326;true;candidate A drifted during the run, shifting +0.60% from its first half to its second, the machine did not hold still
-string;16384;Set3;0.3000;0.2138;79.505;11.8791;18.084;17.716;18.341;0.3279;true;candidate A drifted during the run, shifting -0.17% from its first half to its second, the machine did not hold still
-string;16384;Set3;0.2500;0.1789;95.005;11.8041;18.027;17.836;18.341;0.4079;true;
-string;2097152;map;0.0000;0.4688;53.328;39.9459;0.000;0.000;0.000;0.0000;false;
-string;2097152;Set3;0.8000;0.5759;29.520;31.6342;16.022;13.543;19.476;1.1555;true;candidate B drifted during the run, shifting +4.02% from its first half to its second, the machine did not hold still
-string;2097152;Set3;0.6500;0.4679;36.332;32.0681;14.115;5.484;21.573;1.0869;true;in 44% of A/A runs this setup reported a difference between identical code, well above the 10% expected, treat any confidence from it with suspicion
-string;2097152;Set3;0.5000;0.3600;47.227;32.4063;15.495;9.104;25.411;0.4837;true;
-string;2097152;Set3;0.4000;0.2880;59.031;34.9131;12.994;9.956;18.002;0.8356;true;
-string;2097152;Set3;0.3000;0.2160;78.707;38.7663;10.722;6.244;13.803;0.7440;true;candidate B drifted during the run, shifting -5.41% from its first half to its second, the machine did not hold still
-string;2097152;Set3;0.2500;0.1800;94.449;35.8489;10.256;4.075;20.693;0.7682;true;
-struct3x64;16384;map;0.0000;0.4121;80.081;14.0459;0.000;0.000;0.000;0.0000;false;
-struct3x64;16384;Set3;0.8000;0.5714;43.756;10.4799;25.323;25.117;25.502;0.3694;true;
-struct3x64;16384;Set3;0.6500;0.4629;54.006;10.0302;29.342;29.035;29.630;0.3701;true;
-struct3x64;16384;Set3;0.5000;0.3571;70.006;9.6626;31.068;30.798;31.323;0.4359;true;
-struct3x64;16384;Set3;0.4000;0.2873;87.006;9.6202;31.355;31.163;31.866;0.3857;true;
-struct3x64;16384;Set3;0.3000;0.2146;116.506;9.7084;30.880;30.640;31.356;0.2639;true;
-struct3x64;16384;Set3;0.2500;0.1792;139.506;9.8247;32.635;31.958;33.560;1.1719;true;
-struct3x64;2097152;map;0.0000;0.4121;80.078;46.4307;0.000;0.000;0.000;0.0000;false;
-struct3x64;2097152;Set3;0.8000;0.5760;43.406;18.8548;43.743;28.333;48.623;1.7117;true;
-struct3x64;2097152;Set3;0.6500;0.4679;53.426;38.1650;41.017;34.859;47.169;3.5867;true;
-struct3x64;2097152;Set3;0.5000;0.3600;69.449;23.2392;37.355;22.577;47.633;2.5043;true;
-struct3x64;2097152;Set3;0.4000;0.2880;86.809;23.4929;37.136;18.897;47.743;5.4529;true;
-struct3x64;2097152;Set3;0.3000;0.2160;115.746;47.6063;24.329;10.367;32.551;5.4490;true;candidate A drifted during the run, shifting -27.43% from its first half to its second, the machine did not hold still, candidate B drifted during the run, shifting -22.57% from its first half to its second, the machine did not hold still
-struct3x64;2097152;Set3;0.2500;0.1800;138.895;42.6981;8.039;4.195;23.199;3.7175;true;
+uint64;16384;map;0.0000;0.4711;36.088;10.3813;0.000;0.000;0.000;0.0000;false;
+uint64;16384;Set3;0.6000;0.5897;15.261;7.8951;24.240;23.916;24.554;0.5956;true;
+uint64;16384;Set3;0.5100;0.4999;18.005;7.1791;30.668;30.274;30.932;0.7399;true;
+uint64;16384;Set3;0.4200;0.4089;22.012;6.8029;34.573;33.116;35.223;0.9708;true;candidate A drifted during the run, shifting +2.53% from its first half to its second, the machine did not hold still, candidate B drifted during the run, shifting +0.97% from its first half to its second, the machine did not hold still
+uint64;16384;Set3;0.3480;0.3395;26.512;6.6937;35.479;35.134;35.656;1.8556;true;in 44% of A/A runs this setup reported a difference between identical code, well above the 10% expected, treat any confidence from it with suspicion
+uint64;16384;Set3;0.2880;0.2857;31.505;6.7131;35.313;34.986;35.518;0.6994;true;
+uint64;16384;Set3;0.2400;0.2368;38.005;6.6912;35.546;35.227;35.795;0.4544;true;
+uint64;2097152;map;0.0000;0.4712;36.078;18.9440;0.000;0.000;0.000;0.0000;false;
+uint64;2097152;Set3;0.6000;0.5998;15.004;13.2276;29.478;27.613;32.518;0.3114;true;
+uint64;2097152;Set3;0.5100;0.5100;17.648;12.3528;33.365;32.398;33.838;0.3325;true;
+uint64;2097152;Set3;0.4200;0.4199;21.434;12.6356;32.935;30.918;35.944;0.4923;true;
+uint64;2097152;Set3;0.3480;0.3479;25.867;12.8419;32.211;31.301;33.709;0.3472;true;
+uint64;2097152;Set3;0.2880;0.2880;31.254;13.3938;29.387;-2.689;47.359;1.1431;false;the interval [-2.69%, 47.36%] includes zero, so a difference in either direction is consistent with these measurements
+uint64;2097152;Set3;0.2400;0.2400;37.504;12.8241;32.586;-3.224;46.244;0.4063;false;the interval [-3.22%, 46.24%] includes zero, so a difference in either direction is consistent with these measurements
+string;16384;map;0.0000;0.4688;53.331;14.5635;0.000;0.000;0.000;0.0000;false;
+string;16384;Set3;0.6000;0.5912;28.755;13.0667;10.819;10.182;11.506;0.3858;true;
+string;16384;Set3;0.5100;0.5074;33.505;12.2964;15.546;15.215;15.916;0.5982;true;in 38% of A/A runs this setup reported a difference between identical code, well above the 10% expected, treat any confidence from it with suspicion
+string;16384;Set3;0.4200;0.4146;41.005;12.0545;16.884;16.344;17.374;0.3207;true;
+string;16384;Set3;0.3480;0.3434;49.505;12.0898;17.359;16.911;17.854;0.7370;true;in 69% of A/A runs this setup reported a difference between identical code, well above the 10% expected, treat any confidence from it with suspicion
+string;16384;Set3;0.2880;0.2857;59.505;12.1266;16.733;16.176;17.279;0.3801;true;candidate A drifted during the run, shifting -3.83% from its first half to its second, the machine did not hold still, candidate B drifted during the run, shifting -2.61% from its first half to its second, the machine did not hold still
+string;16384;Set3;0.2400;0.2377;71.505;11.8845;17.595;17.244;17.884;0.2788;true;candidate B drifted during the run, shifting -0.59% from its first half to its second, the machine did not hold still
+string;2097152;map;0.0000;0.4688;53.328;45.2846;0.000;0.000;0.000;0.0000;false;
+string;2097152;Set3;0.6000;0.5999;28.336;37.7505;13.502;8.576;17.269;2.7883;true;in 62% of A/A runs this setup reported a difference between identical code, well above the 10% expected, treat any confidence from it with suspicion
+string;2097152;Set3;0.5100;0.5100;33.336;36.8003;15.209;11.944;23.217;1.4720;true;
+string;2097152;Set3;0.4200;0.4200;40.481;36.3539;15.918;11.701;20.377;1.8143;true;
+string;2097152;Set3;0.3480;0.3480;48.856;40.1175;11.527;8.899;15.147;0.8028;true;
+string;2097152;Set3;0.2880;0.2880;59.031;40.0582;11.541;3.271;19.010;0.8075;true;
+string;2097152;Set3;0.2400;0.2400;70.836;65.0136;5.464;0.750;13.083;1.4941;true;
+struct3x64;16384;map;0.0000;0.4121;80.081;14.4745;0.000;0.000;0.000;0.0000;false;
+struct3x64;16384;Set3;0.6000;0.5916;42.256;10.7301;25.675;25.364;25.958;0.2446;true;candidate A drifted during the run, shifting +0.63% from its first half to its second, the machine did not hold still
+struct3x64;16384;Set3;0.5100;0.5050;49.506;10.2485;29.435;29.173;29.746;0.3993;true;
+struct3x64;16384;Set3;0.4200;0.4166;60.006;9.9003;31.602;31.403;31.902;0.2836;true;
+struct3x64;16384;Set3;0.3480;0.3448;72.506;9.6962;32.901;32.598;33.316;0.3189;true;
+struct3x64;16384;Set3;0.2880;0.2873;87.020;9.8065;32.501;32.196;32.732;0.3299;true;candidate A drifted during the run, shifting +0.60% from its first half to its second, the machine did not hold still
+struct3x64;16384;Set3;0.2400;0.2381;105.013;9.6306;32.373;32.139;32.644;0.3580;true;candidate A drifted during the run, shifting -0.36% from its first half to its second, the machine did not hold still, candidate B drifted during the run, shifting -0.32% from its first half to its second, the machine did not hold still
+struct3x64;2097152;map;0.0000;0.4121;80.078;26.4359;0.000;0.000;0.000;0.0000;false;
+struct3x64;2097152;Set3;0.6000;0.5999;41.672;17.6329;31.749;30.748;32.597;0.3146;true;candidate B drifted during the run, shifting -0.70% from its first half to its second, the machine did not hold still
+struct3x64;2097152;Set3;0.5100;0.5100;49.023;17.4925;34.532;33.676;35.419;0.3333;true;
+struct3x64;2097152;Set3;0.4200;0.4200;59.527;17.3125;34.511;33.519;36.410;0.2871;true;
+struct3x64;2097152;Set3;0.3480;0.3480;71.844;17.6223;33.037;31.865;34.749;0.2095;true;
+struct3x64;2097152;Set3;0.2880;0.2880;86.809;17.8265;31.194;29.879;32.822;0.4808;true;
+struct3x64;2097152;Set3;0.2400;0.2400;104.172;19.0578;28.778;27.263;30.696;0.3912;true;in 31% of A/A runs this setup reported a difference between identical code, well above the 10% expected, treat any confidence from it with suspicion
