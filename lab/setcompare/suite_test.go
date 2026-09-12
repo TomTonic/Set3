@@ -318,8 +318,22 @@ func TestNativeMapFootprintIsWhatWeMeasure(t *testing.T) {
 	t.Logf("at %d uint64 elements: Set3 %.2f B/element, map[uint64]struct{} %.2f B/element, ratio %.3f",
 		n, set3Per, mapPer, set3Per/mapPer)
 
-	if set3Per < 9 || set3Per > 14 {
-		t.Errorf("Set3 measured %.2f bytes per element; expected 9 to 14 for an 8-byte key plus one control byte", set3Per)
+	// Nine bytes per slot — eight for the key plus one control byte — divided
+	// by the occupancy the library fills to. This is derived from the load
+	// constant rather than written down, because the written-down version went
+	// stale the moment the default load factor moved from 6.667 to 4.8 and
+	// this test started failing for a reason that was not about Go's map at
+	// all. set3MaxAvgGroupLoad is itself held against the library by
+	// TestLabLoadConstantMatchesTheLibrary.
+	const bytesPerSlot = 9.0
+	expectedPer := bytesPerSlot / set3MaxReachableLoad
+	// The band allows for the group count being rounded up to a prime-sized
+	// table and for a presized table carrying its headroom.
+	loPer, hiPer := expectedPer*0.85, expectedPer*1.20
+	if set3Per < loPer || set3Per > hiPer {
+		t.Errorf("Set3 measured %.2f bytes per element; expected %.2f to %.2f, which is %.0f bytes "+
+			"per slot at the %.2f occupancy set3maxAvgGroupLoad = %.2f fills to",
+			set3Per, loPer, hiPer, bytesPerSlot, set3MaxReachableLoad, set3MaxAvgGroupLoad)
 	}
 	if mapPer < 15 || mapPer > 60 {
 		t.Errorf("map[uint64]struct{} measured %.2f bytes per element, outside the 15 to 60 this was last seen in; "+
