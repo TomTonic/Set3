@@ -1,0 +1,41 @@
+Set3 vs. map[T]struct{} — rtcompare suite
+generated: 2026-09-12T01:20:35+02:00
+elapsed:   26m28s
+go:        go1.27.1 linux/amd64, 24 CPUs
+config:    sizes=[16384 2097152] curveSizes=[16384 2097152] keys=[uint64 string struct3x64] scenarios=[] budget=20s hardcap=2m0s resamples=5000 level=0.95 memRepeats=7 tag="load6.5"
+rows:      59 runtime, 24 memory, 0 load-curve
+
+Reading a runtime row
+  delta_pct is positive when Set3 is faster. ci_low_pct/ci_high_pct bound it at
+  the stated level. A row is only worth quoting when resolved is true: that means
+  the interval excludes zero AND the difference is larger than noise_floor_pct,
+  which is what this machine reported as a difference between two runs of
+  identical code. Read the note column even on a resolved row.
+
+Scenarios
+  build-presized  Load a known-size id list into a container created with the right capacity — the case where neither side ever rehashes.
+  build-growing   The same load without a size hint, so the container grows and rehashes its way up. This is what the fill charts in the README measure.
+  dedup-stream    Deduplicate a skewed event stream: a few keys recur constantly, most appear once. Contains-then-Add, as a deduplicator that has to emit the new ones must do.
+  lookup-hit30    Membership filter against a populated set, 30% of queries present — a blocklist or an allowlist check on the request path. Same hit rate as the README's search chart.
+  lookup-hit95    The same filter where almost everything is present, which exercises the found path instead of the probe-until-empty path.
+  lookup-hit30-eqload The same membership filter with Set3 rehashed to the native map's occupancy, which holds the space/time trade fixed and asks what is left: the layout, not the operating point.
+  lookup-hit95-eqload The hit-heavy filter at the native map's occupancy, for the same reason.
+  sliding-window  A fixed-size dedup window: remove the oldest key, insert the newest, forever. The workload that fills a Swiss table with tombstones.
+  churn-fresh     The same fixed-size window over keys the container has never seen — a deduplicator over a live stream, a cache, a work queue. sliding-window cycles a bounded ring, so a key returning to the table finds the home group it had before; here every insert probes from a fresh one, which is the case that decides whether tombstones are reused or merely accumulate.
+  mixed-index     A live membership index: 90% lookups at a 50% hit rate, 10% churn, constant size. The closest thing here to a service under load.
+  graph-visited   Breadth-first traversal of a random 4-regular graph, using the container as the visited set. Dense integer keys and a fresh set per traversal.
+  intersect       Intersect two sets with 20% overlap, as an inverted-index AND query does. Set3.Intersect against the loop a map user writes by hand.
+  iterate         Walk every element once, as a flush or an export does. Set3 scans its groups linearly; the native map walks its buckets in a randomised order.
+
+The load curve
+  loadcurve.csv measures Set3 at several occupancies and the native map once,
+  each as a (bytes per element, nanoseconds per lookup) pair. Set3 has
+  RehashToCapacity, so its operating point is a parameter; the native map has
+  no such knob and is a single point. Read it as a curve against a point:
+  the question is not which is faster but which is faster at what price.
+
+Memory shapes
+  presized      created at the right capacity, then filled
+  grown         created empty, then filled — includes whatever capacity growth landed on
+  half-removed  presized and filled, then every second element removed
+  window-steady a sliding window that has churned through four times its own size

@@ -112,9 +112,18 @@ func findElementSlot(set *Set3[int], key int) (uint64, int, bool) {
 // tombstone, inserts a new key, and asserts that the insertion reuses the
 // tombstone while an overflowed key in the next bucket remains reachable.
 func TestAddReusesTombstoneWithoutBreakingOverflowProbe(t *testing.T) {
-	set := EmptyWithCapacity[int](1)
+	// Presized well above the handful of keys this uses, so that no rehash can
+	// fire in the middle and scramble the arrangement being tested. A tight
+	// capacity made this depend on set3maxAvgGroupLoad: at 4.8 the tenth key
+	// tripped the element limit and the test failed for a reason that had
+	// nothing to do with tombstones.
+	set := EmptyWithCapacity[int](64)
 	groupCount := uint64(len(set.groupCtrl))
 	require.GreaterOrEqual(t, groupCount, uint64(2), "test requires at least two groups")
+	defer func() {
+		require.Equal(t, groupCount, uint64(len(set.groupCtrl)),
+			"the table rehashed during the test, so what it asserts about slot arrangement is meaningless")
+	}()
 
 	const targetGroup uint64 = 0
 	collidingKeys := []int{101, 102, 103, 104, 105, 106, 107, 108, 109}
@@ -486,56 +495,60 @@ func TestFindHashForGroupAndH2RejectsBadInput(t *testing.T) {
 	require.Panics(t, func() { findHashForGroupAndH2(11, 11, 1) })
 }
 
-// TestSlidingWindowRehashesInPlaceInsteadOfGrowing pins the fix for a set that
-// grew without its element count growing.
+// TestChurnDoesNotGrowTheTableWithoutBound pins the fix for a set that grew
+// while its element count stayed put.
 //
 // resident counts every slot that is not empty, tombstones included, and the
-// insert path used to grow the table whenever resident reached the limit. A
-// workload that removes as often as it inserts keeps Size constant and still
-// drives resident upwards, because Remove can clear a slot outright only when
-// its group has an empty slot to terminate probes with — in a full table it
-// usually does not, and leaves a tombstone. The set therefore doubled the
-// memory of a window whose size never changed.
+// insert path used to grow whenever resident reached the limit. Remove can clear
+// a slot outright only when its group has an empty slot to terminate probes
+// with; in a full table it usually does not and leaves a tombstone. Add reuses
+// one only when it happens to lie on the probe path of the element being
+// inserted.
 //
-// Measured before makeRoom existed: a window of 262 144 uint64 keys grew its
-// table 2.25x over twenty window turns and settled at 36% occupancy with 43% of
-// its non-empty slots tombstones. With the fix it stays at the size it was
-// given.
+// The keys have to be ones the set has never seen. A window that cycles a
+// bounded ring gives every arriving key the home group it had before, so its
+// tombstones are reused almost perfectly and the drift never appears — which is
+// why the comparison suite's sliding-window scenario could not see this and a
+// churn-fresh scenario had to be added next to it. Measured at 262 144 uint64
+// keys over twenty window turns, before the fix: 24.94 bytes per element at 36%
+// occupancy against 16.62 at 54% after.
 //
-// The set is deliberately given headroom, so that every rehash this workload
-// triggers is a tombstone rehash and any growth at all is the regression.
-func TestSlidingWindowRehashesInPlaceInsteadOfGrowing(t *testing.T) {
+// One growth is allowed and expected: EmptyWithCapacity leaves the table at
+// about 98% of its limit, and a window needs free slots to keep probing short.
+// What must not happen is a second one, or a third.
+func TestChurnDoesNotGrowTheTableWithoutBound(t *testing.T) {
 	const window = 4096
-	set := EmptyWithCapacity[uint64](window * 2)
+	const turns = 40
+	key := func(i uint64) uint64 { return i * 0x9e3779b97f4a7c15 }
 
+	set := EmptyWithCapacity[uint64](window)
 	for i := range uint64(window) {
-		set.Add(i)
+		set.Add(key(i))
 	}
-	groupsAtStart := len(set.groupCtrl)
-	seed := set.hashFunction.Seed
-	rehashes := 0
 
-	for i := uint64(window); i < window*40; i++ {
-		set.Remove(i - window)
-		set.Add(i)
+	// One window turn to let it settle out of the presized capacity.
+	for i := uint64(window); i < 2*window; i++ {
+		set.Remove(key(i - window))
+		set.Add(key(i))
+	}
+	settled := len(set.groupCtrl)
 
+	for i := uint64(2 * window); i < turns*window; i++ {
+		set.Remove(key(i - window))
+		set.Add(key(i))
 		require.Equal(t, window, int(set.Size()), "the window changed size, so this is no longer the workload under test")
-		require.Equal(t, groupsAtStart, len(set.groupCtrl),
-			"the table grew from %d to %d groups while holding a constant %d elements; "+
-				"tombstone pressure is being answered by growing instead of by rehashing in place",
-			groupsAtStart, len(set.groupCtrl), window)
-
-		if set.hashFunction.Seed != seed {
-			rehashes++
-			seed = set.hashFunction.Seed
-		}
+		require.Equal(t, settled, len(set.groupCtrl),
+			"the table grew to %d groups while holding a constant %d elements; tombstone pressure is being "+
+				"answered by growing instead of by rehashing in place", len(set.groupCtrl), window)
 	}
 
-	// Without at least one rehash the assertion above would hold vacuously:
-	// the workload has to actually produce the tombstone pressure it claims to.
-	require.Positive(t, rehashes, "no rehash was triggered, so the in-place path was never exercised")
-	t.Logf("%d in-place rehashes over %d window turns, %d groups throughout, %d tombstones left",
-		rehashes, 39, groupsAtStart, set.dead)
+	// Without tombstones the assertion above would hold for the wrong reason:
+	// the workload has to actually produce the pressure it claims to. This also
+	// keeps the test meaningful if set3maxAvgGroupLoad is retuned, where a
+	// roomier table may never need to rehash at all.
+	require.Positive(t, set.dead, "no tombstone survived, so the pressure this test is about never arose")
+	t.Logf("%d groups throughout %d window turns, %d tombstones against %d elements",
+		settled, turns-1, set.dead, set.Size())
 }
 
 // TestMakeRoomGrowsOnlyWhenTheElementsNeedIt checks the decision itself, at both
